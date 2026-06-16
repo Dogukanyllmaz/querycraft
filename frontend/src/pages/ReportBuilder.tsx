@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { connectionsService, type Connection, type TableColumn } from '@/services/connections'
 import { TablePicker } from '@/components/ui/table-picker'
 import { reportsService, type ReportConfig, type ReportFilter } from '@/services/reports'
@@ -41,6 +41,7 @@ function StepIndicator({ current }: { current: number }) {
 export function ReportBuilder() {
   const navigate = useNavigate()
   const { id } = useParams<{ id?: string }>()
+  const [searchParams] = useSearchParams()
   const isEdit = Boolean(id)
 
   const [step, setStep] = useState(0)
@@ -62,21 +63,48 @@ export function ReportBuilder() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
-  // Load connections on mount
+  // Load connections on mount; pre-fill from ?connectionId&table query params
   useEffect(() => {
-    connectionsService.list()
-      .then((r) => setConnections(r.data.data.connections))
-      .finally(() => setLoadingConn(false))
+    connectionsService.list().then(async (r) => {
+      setConnections(r.data.data.connections)
+      const preConn = searchParams.get('connectionId')
+      const preTable = searchParams.get('table')
+      if (preConn && !id) {
+        await handleConnectionChange(preConn)
+        if (preTable) {
+          await handleTableChangeDirect(preConn, preTable)
+        }
+      }
+    }).finally(() => setLoadingConn(false))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Load existing report for edit
+  // Load existing report for edit — populate tables + schema without resetting config
   useEffect(() => {
     if (!id) return
-    reportsService.get(id).then((r) => {
+    reportsService.get(id).then(async (r) => {
       const report = r.data.data.report
       setReportName(report.name)
       setConnectionId(report.connection_id)
       setConfig(report.config)
+
+      setLoadingTables(true)
+      try {
+        const tr = await connectionsService.getTables(report.connection_id)
+        setTables(tr.data.data.tables)
+      } finally {
+        setLoadingTables(false)
+      }
+
+      if (report.config.table) {
+        setLoadingSchema(true)
+        try {
+          const sr = await connectionsService.getTableSchema(report.connection_id, report.config.table)
+          setSchema(sr.data.data.schema)
+        } finally {
+          setLoadingSchema(false)
+        }
+      }
     })
   }, [id])
 
@@ -94,20 +122,24 @@ export function ReportBuilder() {
     }
   }
 
+  async function handleTableChangeDirect(cid: string, table: string) {
+    setConfig((c) => ({ ...c, table, columns: [], filters: [], orderBy: undefined }))
+    setSchema([])
+    setLoadingSchema(true)
+    try {
+      const r = await connectionsService.getTableSchema(cid, table)
+      setSchema(r.data.data.schema)
+    } finally {
+      setLoadingSchema(false)
+    }
+  }
+
   async function handleTableChange(table: string) {
     if (table === config.table && schema.length > 0) {
       setConfig((c) => ({ ...c, table }))
       return // schema already loaded for this table
     }
-    setConfig((c) => ({ ...c, table, columns: [], filters: [], orderBy: undefined }))
-    setSchema([])
-    setLoadingSchema(true)
-    try {
-      const r = await connectionsService.getTableSchema(connectionId, table)
-      setSchema(r.data.data.schema)
-    } finally {
-      setLoadingSchema(false)
-    }
+    await handleTableChangeDirect(connectionId, table)
   }
 
   function toggleColumn(col: string) {

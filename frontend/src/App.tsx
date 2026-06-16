@@ -10,6 +10,7 @@ import { Connections } from '@/pages/Connections'
 import { Reports } from '@/pages/Reports'
 import { ReportBuilder } from '@/pages/ReportBuilder'
 import { ReportDetail } from '@/pages/ReportDetail'
+import { DatabaseBrowser } from '@/pages/DatabaseBrowser'
 
 export default function App() {
   return (
@@ -27,6 +28,7 @@ export default function App() {
           <Route path="/reports/new" element={<ProtectedRoute><Layout><ReportBuilder /></Layout></ProtectedRoute>} />
           <Route path="/reports/:id" element={<ProtectedRoute><Layout><ReportDetail /></Layout></ProtectedRoute>} />
           <Route path="/reports/:id/edit" element={<ProtectedRoute><Layout><ReportBuilder /></Layout></ProtectedRoute>} />
+          <Route path="/connections/:id/browse" element={<ProtectedRoute><Layout><DatabaseBrowser /></Layout></ProtectedRoute>} />
 
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>

@@ -5,7 +5,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/spinner'
-import { FileText, Plus, Trash2, Play, Download } from 'lucide-react'
+import { FileText, Plus, Trash2, Play, Download, Edit } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 
 export function Reports() {
@@ -78,6 +78,9 @@ export function Reports() {
                   )}
                   <Button size="sm" variant="outline" onClick={() => navigate(`/reports/${r.id}`)}>
                     <Play className="h-3.5 w-3.5" /> Run
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => navigate(`/reports/${r.id}/edit`)} title="Edit report">
+                    <Edit className="h-3.5 w-3.5" />
                   </Button>
                   <a href={reportsService.exportUrl(r.id, 'csv')} download>
                     <Button size="sm" variant="ghost" title="Export CSV">
