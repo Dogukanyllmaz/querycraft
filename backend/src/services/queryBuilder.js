@@ -1,0 +1,62 @@
+'use strict';
+
+const { FILTER_OPERATORS, SORT_DIRECTIONS, MAX_ROWS_PER_QUERY } = require('../config/constants');
+
+function validateIdentifier(name) {
+  // Allow only alphanumeric, underscore, and spaces (for quoted identifiers)
+  if (!/^[a-zA-Z0-9_\s]+$/.test(name)) {
+    const err = new Error(`Invalid identifier: ${name}`);
+    err.statusCode = 400;
+    err.code = 'INVALID_IDENTIFIER';
+    throw err;
+  }
+}
+
+function buildQuery(k, config) {
+  const { table, columns, filters = [], orderBy, limit = 1000 } = config;
+
+  validateIdentifier(table);
+  columns.forEach(validateIdentifier);
+
+  const safeLimit = Math.min(parseInt(limit) || 1000, MAX_ROWS_PER_QUERY);
+
+  let query = k(table).select(columns).limit(safeLimit);
+
+  for (const filter of filters) {
+    validateIdentifier(filter.column);
+
+    if (!FILTER_OPERATORS.includes(filter.operator)) {
+      const err = new Error(`Invalid operator: ${filter.operator}`);
+      err.statusCode = 400;
+      err.code = 'INVALID_OPERATOR';
+      throw err;
+    }
+
+    switch (filter.operator) {
+      case 'IS NULL':
+        query = query.whereNull(filter.column);
+        break;
+      case 'IS NOT NULL':
+        query = query.whereNotNull(filter.column);
+        break;
+      case 'LIKE':
+      case 'NOT LIKE':
+        query = query.where(filter.column, filter.operator, `%${filter.value}%`);
+        break;
+      default:
+        query = query.where(filter.column, filter.operator, filter.value);
+    }
+  }
+
+  if (orderBy) {
+    validateIdentifier(orderBy.column);
+    const direction = SORT_DIRECTIONS.includes(orderBy.direction?.toUpperCase())
+      ? orderBy.direction.toUpperCase()
+      : 'ASC';
+    query = query.orderBy(orderBy.column, direction);
+  }
+
+  return query;
+}
+
+module.exports = { buildQuery, validateIdentifier };

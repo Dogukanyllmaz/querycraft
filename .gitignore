@@ -1,0 +1,77 @@
+# ── Dependencies ────────────────────────────────────────────────────────────────
+node_modules/
+.pnp
+.pnp.js
+
+# ── Environment & Secrets ────────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# ── Database ─────────────────────────────────────────────────────────────────────
+backend/data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# ── Build Outputs ────────────────────────────────────────────────────────────────
+dist/
+build/
+out/
+
+# ── Logs ─────────────────────────────────────────────────────────────────────────
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ── Runtime ──────────────────────────────────────────────────────────────────────
+pids/
+*.pid
+*.seed
+*.pid.lock
+.node_repl_history
+
+# ── Coverage & Testing ───────────────────────────────────────────────────────────
+coverage/
+*.lcov
+.nyc_output/
+
+# ── Cache ─────────────────────────────────────────────────────────────────────────
+.npm
+.eslintcache
+.stylelintcache
+*.tsbuildinfo
+.parcel-cache
+.cache/
+.vite/
+
+# ── OS ───────────────────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ── IDEs ─────────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# ── Exports (downloaded by users, not versioned) ─────────────────────────────────
+exports/
+*.csv
+*.xlsx
