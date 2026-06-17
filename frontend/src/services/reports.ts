@@ -12,6 +12,12 @@ export interface ReportJoin {
   on: { leftColumn: string; rightColumn: string }
 }
 
+export interface ChartConfig {
+  type: 'bar' | 'line' | 'area' | 'pie'
+  xAxis: string
+  yAxis: string
+}
+
 export interface ReportConfig {
   table: string
   columns: string[]
@@ -19,6 +25,7 @@ export interface ReportConfig {
   orderBy?: { column: string; direction: 'ASC' | 'DESC' }
   limit: number
   joins: ReportJoin[]
+  chart?: ChartConfig
 }
 
 export interface Report {

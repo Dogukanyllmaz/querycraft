@@ -50,6 +50,11 @@ const reportSchema = Joi.object({
         }).required(),
       })
     ).default([]),
+    chart: Joi.object({
+      type: Joi.string().valid('bar', 'line', 'area', 'pie').required(),
+      xAxis: Joi.string().min(1).required(),
+      yAxis: Joi.string().min(1).required(),
+    }).optional(),
   }).required(),
 });
 

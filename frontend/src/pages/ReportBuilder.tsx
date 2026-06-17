@@ -11,9 +11,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/spinner'
-import { ChevronRight, ChevronLeft, Plus, Trash2, Check, Link } from 'lucide-react'
+import { ChevronRight, ChevronLeft, Plus, Trash2, Check, Link, BarChart2, LineChart, AreaChart, PieChart } from 'lucide-react'
+import { ReportChart } from '@/components/ui/report-chart'
+import type { ChartConfig } from '@/services/reports'
 
-const STEPS = ['Select Table', 'Add JOINs', 'Choose Columns', 'Add Filters', 'Sort & Limit', 'Preview & Save']
+const STEPS = ['Select Table', 'Add JOINs', 'Choose Columns', 'Add Filters', 'Sort & Limit', 'Configure Chart', 'Preview & Save']
 const OPERATORS = ['=', '!=', '>', '<', '>=', '<=', 'LIKE', 'NOT LIKE', 'IS NULL', 'IS NOT NULL']
 const JOIN_TYPES = [
   { value: 'INNER', label: 'INNER JOIN' },
@@ -61,7 +63,7 @@ export function ReportBuilder() {
   const [reportName, setReportName] = useState('')
 
   const [config, setConfig] = useState<ReportConfig>({
-    table: '', columns: [], filters: [], orderBy: undefined, limit: 1000, joins: [],
+    table: '', columns: [], filters: [], orderBy: undefined, limit: 1000, joins: [], chart: undefined,
   })
 
   const [loadingConn, setLoadingConn] = useState(true)
@@ -303,7 +305,7 @@ export function ReportBuilder() {
   }
 
   function goNext() {
-    if (step === 4) loadPreview()
+    if (step === 5) loadPreview()
     setStep((s) => Math.min(s + 1, STEPS.length - 1))
   }
 
@@ -630,8 +632,94 @@ export function ReportBuilder() {
         </Card>
       )}
 
-      {/* ── Step 5: Preview & Save ────────────────────────────────────── */}
-      {step === 5 && (
+      {/* ── Step 5: Configure Chart ───────────────────────────────────── */}
+      {step === 5 && (() => {
+        const CHART_TYPES: { value: ChartConfig['type']; label: string; icon: React.ReactNode }[] = [
+          { value: 'bar', label: 'Bar', icon: <BarChart2 className="h-4 w-4" /> },
+          { value: 'line', label: 'Line', icon: <LineChart className="h-4 w-4" /> },
+          { value: 'area', label: 'Area', icon: <AreaChart className="h-4 w-4" /> },
+          { value: 'pie', label: 'Pie', icon: <PieChart className="h-4 w-4" /> },
+        ]
+        const chart = config.chart
+        return (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Configure Chart (Optional)</CardTitle>
+              <p className="text-sm text-gray-400 mt-0.5">Add a chart to visualise the report data after running it.</p>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="rounded"
+                  checked={Boolean(chart)}
+                  onChange={(e) => setConfig((c) => ({
+                    ...c,
+                    chart: e.target.checked
+                      ? { type: 'bar', xAxis: c.columns[0] ?? '', yAxis: c.columns[1] ?? c.columns[0] ?? '' }
+                      : undefined,
+                  }))}
+                />
+                <span className="text-sm font-medium text-gray-700">Include a chart in this report</span>
+              </label>
+
+              {chart && (
+                <>
+                  <div className="space-y-1.5">
+                    <Label>Chart Type</Label>
+                    <div className="flex gap-2 flex-wrap">
+                      {CHART_TYPES.map((t) => (
+                        <button
+                          key={t.value}
+                          type="button"
+                          onClick={() => setConfig((c) => ({ ...c, chart: c.chart ? { ...c.chart, type: t.value } : undefined }))}
+                          className={`flex items-center gap-1.5 px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                            chart.type === t.value
+                              ? 'bg-blue-600 text-white border-blue-600'
+                              : 'border-gray-200 text-gray-600 hover:border-blue-300 hover:text-blue-600'
+                          }`}
+                        >
+                          {t.icon} {t.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <Label>{chart.type === 'pie' ? 'Name Column (categories)' : 'X Axis'}</Label>
+                      <Select value={chart.xAxis} onValueChange={(v) => setConfig((c) => ({ ...c, chart: c.chart ? { ...c.chart, xAxis: v } : undefined }))}>
+                        <SelectTrigger><SelectValue placeholder="Select column" /></SelectTrigger>
+                        <SelectContent>
+                          {config.columns.map((col) => <SelectItem key={col} value={col}><span className="font-mono">{col}</span></SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>{chart.type === 'pie' ? 'Value Column (numeric)' : 'Y Axis (numeric)'}</Label>
+                      <Select value={chart.yAxis} onValueChange={(v) => setConfig((c) => ({ ...c, chart: c.chart ? { ...c.chart, yAxis: v } : undefined }))}>
+                        <SelectTrigger><SelectValue placeholder="Select column" /></SelectTrigger>
+                        <SelectContent>
+                          {config.columns.map((col) => <SelectItem key={col} value={col}><span className="font-mono">{col}</span></SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  {chart.xAxis && chart.yAxis && (
+                    <div className="text-xs text-gray-400 bg-gray-50 rounded-lg p-3">
+                      Chart will show <span className="font-mono font-medium text-gray-600">{chart.yAxis}</span> (Y) per <span className="font-mono font-medium text-gray-600">{chart.xAxis}</span> (X) as a <strong>{chart.type}</strong> chart.
+                    </div>
+                  )}
+                </>
+              )}
+            </CardContent>
+          </Card>
+        )
+      })()}
+
+      {/* ── Step 6: Preview & Save ────────────────────────────────────── */}
+      {step === 6 && (
         <div className="space-y-4">
           <Card>
             <CardHeader><CardTitle className="text-base">Report Name</CardTitle></CardHeader>
@@ -659,7 +747,10 @@ export function ReportBuilder() {
                   </div>
                 )}
                 {config.joins.length > 0 && (
-                  <Badge variant="outline"><Link className="h-3 w-3 mr-1" />{config.joins.length} JOIN{config.joins.length > 1 ? 's' : ''}</Badge>
+                  <Badge variant="outline"><Link className="h-3 w-3 mr-1 inline" />{config.joins.length} JOIN{config.joins.length > 1 ? 's' : ''}</Badge>
+                )}
+                {config.chart && (
+                  <Badge variant="success">{config.chart.type} chart</Badge>
                 )}
                 <Button size="sm" variant="outline" onClick={loadPreview} disabled={loadingPreview}>
                   {loadingPreview ? <Spinner className="h-3.5 w-3.5" /> : 'Refresh'}
