@@ -23,6 +23,13 @@ const STEPS = ['Select Table', 'Add JOINs', 'Choose Columns', 'Add Filters', 'So
 const NUMERIC_TYPES = /int|float|double|decimal|numeric|real|money|bigint|number|bit/i
 function isNumeric(type: string) { return NUMERIC_TYPES.test(type) }
 
+/** Returns the actual result-set key for a column: alias if set, or unqualified col name. */
+function getResultKey(colId: string, aliases: Record<string, string> = {}): string {
+  const alias = (aliases[colId] ?? '').trim()
+  if (alias) return alias
+  return colId.includes('.') ? colId.split('.')[1] : colId
+}
+
 interface AxisColMeta { id: string; label: string; type: string; isAgg: boolean }
 
 function AxisPicker({
@@ -35,8 +42,18 @@ function AxisPicker({
 }) {
   const [search, setSearch] = useState('')
   const filtered = search
-    ? cols.filter((c) => c.id.toLowerCase().includes(search.toLowerCase()))
+    ? cols.filter((c) => c.label.toLowerCase().includes(search.toLowerCase()))
     : cols
+
+  // Sort recommended columns first (no dimming — just ordering)
+  const sorted = [...filtered].sort((a, b) => {
+    const aNum = a.isAgg || isNumeric(a.type)
+    const bNum = b.isAgg || isNumeric(b.type)
+    const aFit = hint === 'numeric' ? aNum : !aNum
+    const bFit = hint === 'numeric' ? bNum : !bNum
+    if (aFit === bFit) return 0
+    return aFit ? -1 : 1
+  })
 
   return (
     <div className="space-y-2">
@@ -50,12 +67,11 @@ function AxisPicker({
         />
       )}
       <div className="max-h-52 overflow-y-auto pr-0.5 space-y-1">
-        {filtered.length === 0 && (
+        {sorted.length === 0 && (
           <p className="text-xs text-gray-400 text-center py-4">No columns match.</p>
         )}
-        {filtered.map((col) => {
-          const numeric  = col.isAgg || isNumeric(col.type)
-          const goodFit  = hint === 'numeric' ? numeric : !numeric
+        {sorted.map((col) => {
+          const numeric    = col.isAgg || isNumeric(col.type)
           const isSelected = selected === col.id
           return (
             <button
@@ -65,9 +81,7 @@ function AxisPicker({
               className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg border text-left transition-all ${
                 isSelected
                   ? 'bg-blue-600 border-blue-600 text-white shadow-sm'
-                  : goodFit
-                  ? 'border-gray-200 hover:border-blue-300 hover:bg-blue-50 bg-white'
-                  : 'border-gray-100 hover:border-gray-200 bg-gray-50/50 opacity-70'
+                  : 'border-gray-200 hover:border-blue-300 hover:bg-blue-50 bg-white'
               }`}
             >
               <span className={`text-sm font-mono font-medium truncate ${isSelected ? 'text-white' : 'text-gray-800'}`}>
@@ -122,7 +136,7 @@ interface ColumnItem { id: string; label: string; type: string; group: string }
 
 const EMPTY_CONFIG: ReportConfig = {
   table: '', columns: [], filters: [], orderBy: undefined, limit: 1000,
-  joins: [], chart: undefined, aggregations: [],
+  joins: [], chart: undefined, aggregations: [], columnAliases: {},
 }
 
 export function ReportBuilder() {
@@ -247,7 +261,7 @@ export function ReportBuilder() {
   }
 
   async function handleTableChange(table: string) {
-    setConfig((c) => ({ ...c, table, columns: [], filters: [], orderBy: undefined, joins: [], aggregations: [], chart: undefined }))
+    setConfig((c) => ({ ...c, table, columns: [], filters: [], orderBy: undefined, joins: [], aggregations: [], chart: undefined, columnAliases: {} }))
     setSchema([]); setJoinSchemas(new Map()); setPreviewRows(null)
     if (table) await loadSchemaFor(connectionId, table)
   }
@@ -267,7 +281,7 @@ export function ReportBuilder() {
       joins[i] = { ...joins[i], ...patch }
       // Only reset cols/filters when the joined table changes — type/ON changes are harmless
       if (tableChanged) {
-        return { ...c, joins, columns: [], filters: [], orderBy: undefined, aggregations: [], chart: undefined }
+        return { ...c, joins, columns: [], filters: [], orderBy: undefined, aggregations: [], chart: undefined, columnAliases: {} }
       }
       return { ...c, joins }
     })
@@ -297,7 +311,12 @@ export function ReportBuilder() {
           columns = columns.map((col) => col.includes('.') ? col.split('.')[1] : col)
         }
       }
-      return { ...c, joins, columns, aggregations: [], chart: undefined }
+      // Keep only aliases for columns that still exist
+      const newAliases: Record<string, string> = {}
+      for (const col of columns) {
+        if (c.columnAliases?.[col]) newAliases[col] = c.columnAliases[col]
+      }
+      return { ...c, joins, columns, aggregations: [], chart: undefined, columnAliases: newAliases }
     })
   }
 
@@ -340,36 +359,50 @@ export function ReportBuilder() {
     [hasJoins, allColumns, schema]
   )
 
-  const sortColumns = useMemo(
-    () => [...config.columns, ...config.aggregations.map((a) => a.alias)],
-    [config.columns, config.aggregations]
-  )
+  // Sort options: value = original col ID (for ORDER BY), label = alias or short name (for display)
+  const sortOptions = useMemo(() => {
+    const aliases = config.columnAliases ?? {}
+    return [
+      ...config.columns.map((col) => ({ value: col, label: getResultKey(col, aliases) })),
+      ...config.aggregations.map((a) => ({ value: a.alias, label: a.alias })),
+    ]
+  }, [config.columns, config.aggregations, config.columnAliases])
 
-  const allAxisCols = useMemo(
-    () => [...config.columns, ...config.aggregations.map((a) => a.alias)],
-    [config.columns, config.aggregations]
-  )
+  // Result keys used for initial chart axis selection
+  const allAxisCols = useMemo(() => {
+    const aliases = config.columnAliases ?? {}
+    return [
+      ...config.columns.map((col) => getResultKey(col, aliases)),
+      ...config.aggregations.map((a) => a.alias),
+    ]
+  }, [config.columns, config.aggregations, config.columnAliases])
 
-  // Rich metadata for axis pickers: id, display label, data type, isAgg flag
+  // Rich metadata for axis pickers: id = result key, label = alias/short name, data type, isAgg flag
   const axisColsMeta = useMemo(() => {
     const colMap = new Map(allColumns.map((c) => [c.id, c]))
-    const cols = config.columns.map((id) => {
-      const meta = colMap.get(id)
-      return { id, label: meta?.label ?? id, type: meta?.type ?? '', isAgg: false }
+    const aliases = config.columnAliases ?? {}
+    const cols = config.columns.map((colId) => {
+      const meta = colMap.get(colId)
+      const resultKey = getResultKey(colId, aliases)
+      return { id: resultKey, label: resultKey, type: meta?.type ?? '', isAgg: false }
     })
     const aggs = config.aggregations.map((a) => ({
       id: a.alias, label: a.alias, type: `${a.fn}(${a.column})`, isAgg: true,
     }))
     return [...cols, ...aggs]
-  }, [config.columns, config.aggregations, allColumns])
+  }, [config.columns, config.aggregations, config.columnAliases, allColumns])
 
   // ── Filter helpers ────────────────────────────────────────────────────────
 
   function toggleColumn(colId: string) {
-    setConfig((c) => ({
-      ...c,
-      columns: c.columns.includes(colId) ? c.columns.filter((x) => x !== colId) : [...c.columns, colId],
-    }))
+    setConfig((c) => {
+      if (c.columns.includes(colId)) {
+        const aliases = { ...(c.columnAliases ?? {}) }
+        delete aliases[colId]
+        return { ...c, columns: c.columns.filter((x) => x !== colId), columnAliases: aliases }
+      }
+      return { ...c, columns: [...c.columns, colId] }
+    })
   }
 
   function addFilter() {
@@ -447,7 +480,10 @@ export function ReportBuilder() {
 
   const previewColumns = previewRows && previewRows.length > 0
     ? Object.keys(previewRows[0])
-    : [...config.columns, ...config.aggregations.map((a) => a.alias)]
+    : [
+        ...config.columns.map((col) => getResultKey(col, config.columnAliases ?? {})),
+        ...config.aggregations.map((a) => a.alias),
+      ]
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -652,7 +688,7 @@ export function ReportBuilder() {
                     All
                   </Button>
                   <Button size="sm" variant="outline"
-                    onClick={() => setConfig((c) => ({ ...c, columns: [] }))}>
+                    onClick={() => setConfig((c) => ({ ...c, columns: [], columnAliases: {} }))}>
                     None
                   </Button>
                 </div>
@@ -728,6 +764,42 @@ export function ReportBuilder() {
                     <p className="text-sm text-gray-500 mt-3">
                       {config.columns.length} of {allColumns.length} columns selected
                     </p>
+                  )}
+
+                  {/* Display name / alias editor */}
+                  {config.columns.length > 0 && (
+                    <div className="mt-5 pt-4 border-t border-gray-100">
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
+                        Display Names
+                        <span className="font-normal text-gray-400 normal-case ml-2">— rename columns in results &amp; charts (optional)</span>
+                      </p>
+                      <div className="mt-3 space-y-2">
+                        {config.columns.map((col) => {
+                          const shortName = col.includes('.') ? col.split('.')[1] : col
+                          return (
+                            <div key={col} className="flex items-center gap-3">
+                              <span className="font-mono text-xs text-gray-400 w-44 truncate shrink-0" title={col}>{col}</span>
+                              <span className="text-gray-300 shrink-0 text-xs">→</span>
+                              <input
+                                type="text"
+                                className="flex-1 max-w-xs h-7 text-xs px-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                placeholder={shortName}
+                                value={config.columnAliases?.[col] ?? ''}
+                                onChange={(e) => {
+                                  const val = e.target.value
+                                  setConfig((c) => {
+                                    const aliases = { ...(c.columnAliases ?? {}) }
+                                    if (val) aliases[col] = val
+                                    else delete aliases[col]
+                                    return { ...c, columnAliases: aliases }
+                                  })
+                                }}
+                              />
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
                   )}
                 </>
               )
@@ -859,8 +931,8 @@ export function ReportBuilder() {
                   <SelectTrigger><SelectValue placeholder="No sorting" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="">No sorting</SelectItem>
-                    {sortColumns.map((col) => (
-                      <SelectItem key={col} value={col}><span className="font-mono">{col}</span></SelectItem>
+                    {sortOptions.map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}><span className="font-mono">{opt.label}</span></SelectItem>
                     ))}
                   </SelectContent>
                 </Select>

@@ -62,6 +62,12 @@ const reportSchema = Joi.object({
         alias: Joi.string().pattern(/^[a-zA-Z_][a-zA-Z0-9_]*$/).required(),
       })
     ).default([]),
+    columnAliases: Joi.object()
+      .pattern(
+        Joi.string(),
+        Joi.string().max(100).allow('').pattern(/^[^\x00-\x08\x0a-\x1f;"'`<>\\|]*$/)
+      )
+      .default({}),
   }).required(),
 });
 

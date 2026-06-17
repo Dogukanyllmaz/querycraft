@@ -16,10 +16,17 @@ const JOIN_TYPES = { INNER: 'join', LEFT: 'leftJoin', RIGHT: 'rightJoin' };
 const AGG_FNS = ['COUNT', 'SUM', 'AVG', 'MIN', 'MAX'];
 
 function buildQuery(k, config) {
-  const { table, columns, filters = [], orderBy, limit = 1000, joins = [], aggregations = [] } = config;
+  const { table, columns, filters = [], orderBy, limit = 1000, joins = [], aggregations = [], columnAliases = {} } = config;
 
   validateIdentifier(table);
   columns.forEach(validateIdentifier);
+
+  // Build SELECT expressions — apply user-defined display-name aliases via knex identifier quoting
+  const selectExprs = columns.map((col) => {
+    const alias = (columnAliases[col] || '').trim();
+    if (!alias) return col;
+    return k.raw('?? as ??', [col, alias]);
+  });
 
   const safeLimit = Math.min(parseInt(limit) || 1000, MAX_ROWS_PER_QUERY);
 
@@ -36,9 +43,9 @@ function buildQuery(k, config) {
       if (agg.column !== '*') validateIdentifier(agg.column);
     }
 
-    // GROUP BY selected columns + aggregate expressions
+    // GROUP BY uses original col names; SELECT uses aliased expressions
     if (columns.length > 0) {
-      query = k(table).select(columns).groupBy(columns).limit(safeLimit);
+      query = k(table).select(selectExprs).groupBy(columns).limit(safeLimit);
     } else {
       query = k(table).limit(safeLimit);
     }
@@ -54,7 +61,7 @@ function buildQuery(k, config) {
       }
     }
   } else {
-    query = k(table).select(columns).limit(safeLimit);
+    query = k(table).select(selectExprs).limit(safeLimit);
   }
 
   for (const join of joins) {

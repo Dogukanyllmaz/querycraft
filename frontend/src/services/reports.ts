@@ -33,6 +33,7 @@ export interface ReportConfig {
   joins: ReportJoin[]
   chart?: ChartConfig
   aggregations: AggregationConfig[]
+  columnAliases?: Record<string, string>
 }
 
 export interface Report {
