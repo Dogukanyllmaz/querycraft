@@ -27,11 +27,11 @@ const reportSchema = Joi.object({
   connection_id: Joi.string().uuid().required(),
   config: Joi.object({
     table: Joi.string().min(1).required(),
-    columns: Joi.array().items(Joi.string()).min(1).required(),
+    columns: Joi.array().items(Joi.string()).default([]),
     filters: Joi.array().items(
       Joi.object({
         column: Joi.string().required(),
-        operator: Joi.string().valid('=', '!=', '>', '<', '>=', '<=', 'LIKE', 'NOT LIKE', 'IS NULL', 'IS NOT NULL').required(),
+        operator: Joi.string().valid('=', '!=', '>', '<', '>=', '<=', 'LIKE', 'NOT LIKE', 'IS NULL', 'IS NOT NULL', 'IN').required(),
         value: Joi.alternatives().try(Joi.string(), Joi.number(), Joi.allow(null)),
       })
     ).default([]),
@@ -55,6 +55,13 @@ const reportSchema = Joi.object({
       xAxis: Joi.string().min(1).required(),
       yAxis: Joi.string().min(1).required(),
     }).optional(),
+    aggregations: Joi.array().items(
+      Joi.object({
+        fn: Joi.string().valid('COUNT', 'SUM', 'AVG', 'MIN', 'MAX').required(),
+        column: Joi.string().min(1).required(),
+        alias: Joi.string().pattern(/^[a-zA-Z_][a-zA-Z0-9_]*$/).required(),
+      })
+    ).default([]),
   }).required(),
 });
 

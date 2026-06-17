@@ -18,6 +18,12 @@ export interface ChartConfig {
   yAxis: string
 }
 
+export interface AggregationConfig {
+  fn: 'COUNT' | 'SUM' | 'AVG' | 'MIN' | 'MAX'
+  column: string
+  alias: string
+}
+
 export interface ReportConfig {
   table: string
   columns: string[]
@@ -26,6 +32,7 @@ export interface ReportConfig {
   limit: number
   joins: ReportJoin[]
   chart?: ChartConfig
+  aggregations: AggregationConfig[]
 }
 
 export interface Report {

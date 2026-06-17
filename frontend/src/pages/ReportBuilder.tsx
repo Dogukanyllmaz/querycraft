@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { connectionsService, type Connection, type TableColumn } from '@/services/connections'
 import { TablePicker } from '@/components/ui/table-picker'
-import { reportsService, type ReportConfig, type ReportFilter, type ReportJoin } from '@/services/reports'
+import { reportsService, type ReportConfig, type ReportFilter, type ReportJoin, type AggregationConfig } from '@/services/reports'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -54,6 +54,7 @@ export function ReportBuilder() {
   const isEdit = Boolean(id)
 
   const [step, setStep] = useState(0)
+  const [aggTab, setAggTab] = useState<'columns' | 'aggregations'>('columns')
   const [connections, setConnections] = useState<Connection[]>([])
   const [connectionId, setConnectionId] = useState('')
   const [tables, setTables] = useState<string[]>([])
@@ -63,7 +64,7 @@ export function ReportBuilder() {
   const [reportName, setReportName] = useState('')
 
   const [config, setConfig] = useState<ReportConfig>({
-    table: '', columns: [], filters: [], orderBy: undefined, limit: 1000, joins: [], chart: undefined,
+    table: '', columns: [], filters: [], orderBy: undefined, limit: 1000, joins: [], chart: undefined, aggregations: [],
   })
 
   const [loadingConn, setLoadingConn] = useState(true)
@@ -132,7 +133,7 @@ export function ReportBuilder() {
       const report = r.data.data.report
       setReportName(report.name)
       setConnectionId(report.connection_id)
-      setConfig({ joins: [], ...report.config })
+      setConfig({ joins: [], aggregations: [], ...report.config })
 
       await loadTablesFor(report.connection_id)
 
@@ -159,13 +160,13 @@ export function ReportBuilder() {
   async function handleConnectionChange(cid: string) {
     if (cid === connectionId && tables.length > 0) return
     setConnectionId(cid)
-    setConfig({ table: '', columns: [], filters: [], orderBy: undefined, limit: 1000, joins: [] })
+    setConfig({ table: '', columns: [], filters: [], orderBy: undefined, limit: 1000, joins: [], aggregations: [] })
     setSchema([]); setTables([]); setJoinSchemas(new Map())
     await loadTablesFor(cid)
   }
 
   async function handleTableChange(table: string) {
-    setConfig((c) => ({ ...c, table, columns: [], filters: [], orderBy: undefined, joins: [] }))
+    setConfig((c) => ({ ...c, table, columns: [], filters: [], orderBy: undefined, joins: [], aggregations: [] }))
     setSchema([]); setJoinSchemas(new Map())
     if (table) await loadSchemaFor(connectionId, table)
   }
@@ -174,14 +175,14 @@ export function ReportBuilder() {
 
   function addJoin() {
     const newJoin: ReportJoin = { table: '', type: 'LEFT', on: { leftColumn: '', rightColumn: '' } }
-    setConfig((c) => ({ ...c, joins: [...c.joins, newJoin], columns: [], filters: [], orderBy: undefined }))
+    setConfig((c) => ({ ...c, joins: [...c.joins, newJoin], columns: [], filters: [], orderBy: undefined, aggregations: [] }))
   }
 
   function updateJoin(i: number, patch: Partial<ReportJoin>) {
     setConfig((c) => {
       const joins = [...c.joins]
       joins[i] = { ...joins[i], ...patch }
-      return { ...c, joins, columns: [], filters: [], orderBy: undefined }
+      return { ...c, joins, columns: [], filters: [], orderBy: undefined, aggregations: [] }
     })
   }
 
@@ -201,8 +202,28 @@ export function ReportBuilder() {
       if (removedTable && !joins.some((j) => j.table === removedTable)) {
         setJoinSchemas((prev) => { const m = new Map(prev); m.delete(removedTable); return m })
       }
-      return { ...c, joins, columns: [], filters: [], orderBy: undefined }
+      return { ...c, joins, columns: [], filters: [], orderBy: undefined, aggregations: [] }
     })
+  }
+
+  // ── Aggregation helpers ────────────────────────────────────────────────────
+
+  function addAgg() {
+    const defaultCol = allColumns[0]?.id ?? '*'
+    const newAgg: AggregationConfig = { fn: 'COUNT', column: defaultCol === '*' ? '*' : defaultCol, alias: `count_${Date.now()}` }
+    setConfig((c) => ({ ...c, aggregations: [...c.aggregations, newAgg] }))
+  }
+
+  function updateAgg(i: number, patch: Partial<AggregationConfig>) {
+    setConfig((c) => {
+      const aggregations = [...c.aggregations]
+      aggregations[i] = { ...aggregations[i], ...patch }
+      return { ...c, aggregations }
+    })
+  }
+
+  function removeAgg(i: number) {
+    setConfig((c) => ({ ...c, aggregations: c.aggregations.filter((_, idx) => idx !== i) }))
   }
 
   // ── Column helpers ─────────────────────────────────────────────────────────
@@ -257,7 +278,7 @@ export function ReportBuilder() {
 
   // ── Sort column options ────────────────────────────────────────────────────
 
-  const sortColumns = hasJoins ? config.columns : config.columns
+  const sortColumns = [...config.columns, ...config.aggregations.map((a) => a.alias)]
 
   // ── Preview ───────────────────────────────────────────────────────────────
 
@@ -300,7 +321,7 @@ export function ReportBuilder() {
   function canNext() {
     if (step === 0) return Boolean(connectionId && config.table)
     if (step === 1) return true // joins are optional
-    if (step === 2) return config.columns.length > 0
+    if (step === 2) return config.columns.length > 0 || config.aggregations.length > 0
     return true
   }
 
@@ -463,75 +484,164 @@ export function ReportBuilder() {
         </Card>
       )}
 
-      {/* ── Step 2: Choose columns ────────────────────────────────────── */}
+      {/* ── Step 2: Choose columns / aggregations ─────────────────────── */}
       {step === 2 && (
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-base">Select Columns to Display</CardTitle>
-            <div className="flex gap-2">
-              <Button size="sm" variant="outline"
-                onClick={() => setConfig((c) => ({ ...c, columns: allColumns.map((col) => col.id) }))}>
-                All
-              </Button>
-              <Button size="sm" variant="outline"
-                onClick={() => setConfig((c) => ({ ...c, columns: [] }))}>
-                None
-              </Button>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base">Columns &amp; Aggregations</CardTitle>
+              {aggTab === 'columns' && (
+                <div className="flex gap-2">
+                  <Button size="sm" variant="outline"
+                    onClick={() => setConfig((c) => ({ ...c, columns: allColumns.map((col) => col.id) }))}>
+                    All
+                  </Button>
+                  <Button size="sm" variant="outline"
+                    onClick={() => setConfig((c) => ({ ...c, columns: [] }))}>
+                    None
+                  </Button>
+                </div>
+              )}
+              {aggTab === 'aggregations' && (
+                <Button size="sm" onClick={addAgg}><Plus className="h-4 w-4" /> Add</Button>
+              )}
+            </div>
+            {/* Tab switcher */}
+            <div className="flex border-b border-gray-200 mt-3 -mx-6 px-6">
+              {(['columns', 'aggregations'] as const).map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setAggTab(tab)}
+                  className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors capitalize ${
+                    aggTab === tab
+                      ? 'border-blue-600 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  {tab === 'columns' ? `Columns${config.columns.length > 0 ? ` (${config.columns.length})` : ''}` : `Aggregations${config.aggregations.length > 0 ? ` (${config.aggregations.length})` : ''}`}
+                </button>
+              ))}
             </div>
           </CardHeader>
+
           <CardContent>
-            {loadingSchema ? <Spinner /> : (
-              <>
-                {hasJoins ? (
-                  // Grouped by table
-                  [config.table, ...config.joins.map((j) => j.table).filter(Boolean)].map((tbl) => {
-                    const cols = allColumns.filter((c) => c.group === tbl)
-                    return cols.length === 0 ? null : (
-                      <div key={tbl} className="mb-5">
-                        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2 font-mono">{tbl}</p>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                          {cols.map((col) => (
-                            <label key={col.id} className="flex items-center gap-3 p-3 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
-                              <input
-                                type="checkbox"
-                                checked={config.columns.includes(col.id)}
-                                onChange={() => toggleColumn(col.id)}
-                                className="rounded"
-                              />
-                              <div className="min-w-0">
-                                <p className="text-sm font-medium font-mono truncate">{col.label}</p>
-                                <p className="text-xs text-gray-400">{col.type}</p>
-                              </div>
-                            </label>
-                          ))}
+            {/* Columns tab */}
+            {aggTab === 'columns' && (
+              loadingSchema ? <Spinner /> : (
+                <>
+                  {hasJoins ? (
+                    [config.table, ...config.joins.map((j) => j.table).filter(Boolean)].map((tbl) => {
+                      const cols = allColumns.filter((c) => c.group === tbl)
+                      return cols.length === 0 ? null : (
+                        <div key={tbl} className="mb-5">
+                          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2 font-mono">{tbl}</p>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                            {cols.map((col) => (
+                              <label key={col.id} className="flex items-center gap-3 p-3 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
+                                <input
+                                  type="checkbox"
+                                  checked={config.columns.includes(col.id)}
+                                  onChange={() => toggleColumn(col.id)}
+                                  className="rounded"
+                                />
+                                <div className="min-w-0">
+                                  <p className="text-sm font-medium font-mono truncate">{col.label}</p>
+                                  <p className="text-xs text-gray-400">{col.type}</p>
+                                </div>
+                              </label>
+                            ))}
+                          </div>
                         </div>
-                      </div>
-                    )
-                  })
-                ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                    {allColumns.map((col) => (
-                      <label key={col.id} className="flex items-center gap-3 p-3 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
-                        <input
-                          type="checkbox"
-                          checked={config.columns.includes(col.id)}
-                          onChange={() => toggleColumn(col.id)}
-                          className="rounded"
-                        />
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium font-mono truncate">{col.label}</p>
-                          <p className="text-xs text-gray-400">{col.type}</p>
-                        </div>
-                      </label>
-                    ))}
+                      )
+                    })
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                      {allColumns.map((col) => (
+                        <label key={col.id} className="flex items-center gap-3 p-3 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
+                          <input
+                            type="checkbox"
+                            checked={config.columns.includes(col.id)}
+                            onChange={() => toggleColumn(col.id)}
+                            className="rounded"
+                          />
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium font-mono truncate">{col.label}</p>
+                            <p className="text-xs text-gray-400">{col.type}</p>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                  {config.columns.length > 0 && (
+                    <p className="text-sm text-gray-500 mt-3">
+                      {config.columns.length} of {allColumns.length} columns selected
+                    </p>
+                  )}
+                </>
+              )
+            )}
+
+            {/* Aggregations tab */}
+            {aggTab === 'aggregations' && (
+              <div className="space-y-3">
+                <p className="text-sm text-gray-400">
+                  Aggregate over selected columns. Selected columns become GROUP BY keys; each aggregation produces a computed column.
+                </p>
+                {config.aggregations.length === 0 ? (
+                  <div className="flex flex-col items-center py-8 text-gray-400 gap-2">
+                    <BarChart2 className="h-8 w-8 opacity-20" />
+                    <p className="text-sm">No aggregations. Click "Add" to create one.</p>
                   </div>
+                ) : (
+                  config.aggregations.map((agg, i) => (
+                    <div key={i} className="flex items-center gap-2 flex-wrap p-3 bg-gray-50 rounded-lg border border-gray-100">
+                      {/* Function */}
+                      <Select value={agg.fn} onValueChange={(v) => updateAgg(i, { fn: v as AggregationConfig['fn'] })}>
+                        <SelectTrigger className="w-28 h-8 text-xs font-mono">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {(['COUNT', 'SUM', 'AVG', 'MIN', 'MAX'] as const).map((fn) => (
+                            <SelectItem key={fn} value={fn}>{fn}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+
+                      <span className="text-gray-400 text-sm">(</span>
+
+                      {/* Column */}
+                      <Select value={agg.column} onValueChange={(v) => updateAgg(i, { column: v })}>
+                        <SelectTrigger className="w-44 h-8 text-xs">
+                          <SelectValue placeholder="Column" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {agg.fn === 'COUNT' && (
+                            <SelectItem value="*"><span className="font-mono">* (all rows)</span></SelectItem>
+                          )}
+                          {allColumns.map((col) => (
+                            <SelectItem key={col.id} value={col.id}><span className="font-mono">{col.id}</span></SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+
+                      <span className="text-gray-400 text-sm">) AS</span>
+
+                      {/* Alias */}
+                      <Input
+                        className="h-8 w-36 text-xs font-mono"
+                        placeholder="alias"
+                        value={agg.alias}
+                        onChange={(e) => updateAgg(i, { alias: e.target.value.replace(/[^a-zA-Z0-9_]/g, '_') })}
+                      />
+
+                      <button onClick={() => removeAgg(i)} className="text-gray-400 hover:text-red-500 ml-auto">
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))
                 )}
-                {config.columns.length > 0 && (
-                  <p className="text-sm text-gray-500 mt-3">
-                    {config.columns.length} of {allColumns.length} columns selected
-                  </p>
-                )}
-              </>
+              </div>
             )}
           </CardContent>
         </Card>
@@ -641,6 +751,7 @@ export function ReportBuilder() {
           { value: 'pie', label: 'Pie', icon: <PieChart className="h-4 w-4" /> },
         ]
         const chart = config.chart
+        const allAxisCols = [...config.columns, ...config.aggregations.map((a) => a.alias)]
         return (
           <Card>
             <CardHeader>
@@ -653,12 +764,15 @@ export function ReportBuilder() {
                   type="checkbox"
                   className="rounded"
                   checked={Boolean(chart)}
-                  onChange={(e) => setConfig((c) => ({
-                    ...c,
-                    chart: e.target.checked
-                      ? { type: 'bar', xAxis: c.columns[0] ?? '', yAxis: c.columns[1] ?? c.columns[0] ?? '' }
-                      : undefined,
-                  }))}
+                  onChange={(e) => setConfig((c) => {
+                    const axisCols = [...c.columns, ...c.aggregations.map((a) => a.alias)]
+                    return {
+                      ...c,
+                      chart: e.target.checked
+                        ? { type: 'bar', xAxis: axisCols[0] ?? '', yAxis: axisCols[1] ?? axisCols[0] ?? '' }
+                        : undefined,
+                    }
+                  })}
                 />
                 <span className="text-sm font-medium text-gray-700">Include a chart in this report</span>
               </label>
@@ -691,7 +805,7 @@ export function ReportBuilder() {
                       <Select value={chart.xAxis} onValueChange={(v) => setConfig((c) => ({ ...c, chart: c.chart ? { ...c.chart, xAxis: v } : undefined }))}>
                         <SelectTrigger><SelectValue placeholder="Select column" /></SelectTrigger>
                         <SelectContent>
-                          {config.columns.map((col) => <SelectItem key={col} value={col}><span className="font-mono">{col}</span></SelectItem>)}
+                          {allAxisCols.map((col) => <SelectItem key={col} value={col}><span className="font-mono">{col}</span></SelectItem>)}
                         </SelectContent>
                       </Select>
                     </div>
@@ -700,7 +814,7 @@ export function ReportBuilder() {
                       <Select value={chart.yAxis} onValueChange={(v) => setConfig((c) => ({ ...c, chart: c.chart ? { ...c.chart, yAxis: v } : undefined }))}>
                         <SelectTrigger><SelectValue placeholder="Select column" /></SelectTrigger>
                         <SelectContent>
-                          {config.columns.map((col) => <SelectItem key={col} value={col}><span className="font-mono">{col}</span></SelectItem>)}
+                          {allAxisCols.map((col) => <SelectItem key={col} value={col}><span className="font-mono">{col}</span></SelectItem>)}
                         </SelectContent>
                       </Select>
                     </div>
@@ -745,6 +859,9 @@ export function ReportBuilder() {
                     {config.columns.slice(0, 4).map((c) => <Badge key={c} variant="secondary" className="font-mono text-xs">{c}</Badge>)}
                     {config.columns.length > 4 && <Badge variant="outline">+{config.columns.length - 4}</Badge>}
                   </div>
+                )}
+                {config.aggregations.length > 0 && (
+                  <Badge variant="outline"><BarChart2 className="h-3 w-3 mr-1 inline" />{config.aggregations.map((a) => `${a.fn}(${a.column}) AS ${a.alias}`).join(', ')}</Badge>
                 )}
                 {config.joins.length > 0 && (
                   <Badge variant="outline"><Link className="h-3 w-3 mr-1 inline" />{config.joins.length} JOIN{config.joins.length > 1 ? 's' : ''}</Badge>
