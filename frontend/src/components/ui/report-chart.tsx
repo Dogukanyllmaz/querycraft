@@ -221,11 +221,21 @@ export function ReportChart({ chartConfig, rows }: Props) {
   )
 
   // ── Donut / Pie ───────────────────────────────────────────────────────────────
-  const pieData = data.slice(0, 12).map((r, i) => ({
-    name:  String(r[xAxis] ?? '(empty)'),
-    value: toNum(r[yAxis]),
-    fill:  COLORS[i % COLORS.length],
-  })).filter((d) => d.value > 0)
+  // Group ALL rows by xAxis key, sum the yAxis values — then show top 12 by value.
+  const pieData = (() => {
+    const grouped = new Map<string, number>()
+    for (const r of rows) {
+      const key = String(r[xAxis] ?? '(empty)')
+      grouped.set(key, (grouped.get(key) ?? 0) + toNum(r[yAxis]))
+    }
+    return Array.from(grouped.entries())
+      .map(([name, value], i) => ({ name, value, fill: COLORS[i % COLORS.length] }))
+      .filter((d) => d.value > 0)
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 12)
+  })()
+
+  const uniqueCategories = new Set(rows.map((r) => String(r[xAxis] ?? ''))).size
 
   if (!pieData.length) {
     return <EmptyChart message="No positive values to display." />
@@ -233,8 +243,8 @@ export function ReportChart({ chartConfig, rows }: Props) {
 
   return (
     <div className="animate-fade-in">
-      {rows.length > 12 && (
-        <SampleNote total={rows.length} shown={Math.min(12, pieData.length)} label="slices shown (top 12)" />
+      {uniqueCategories > 12 && (
+        <SampleNote total={uniqueCategories} shown={pieData.length} label="categories shown (top 12 by value)" />
       )}
       <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
         <PieChart>
