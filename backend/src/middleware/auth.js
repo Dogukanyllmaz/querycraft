@@ -20,7 +20,8 @@ function requireAuth(req, res, next) {
     }
 
     const payload = verifyAccessToken(token);
-    req.userId = payload.sub;
+    req.userId   = payload.sub;
+    req.userRole = payload.role || 'viewer';
     next();
   } catch (err) {
     if (err.name === 'TokenExpiredError') {
@@ -30,4 +31,11 @@ function requireAuth(req, res, next) {
   }
 }
 
-module.exports = { requireAuth };
+function requireAdmin(req, res, next) {
+  if (req.userRole !== 'admin') {
+    return errorResponse(res, 'Admin access required', 'FORBIDDEN', 403);
+  }
+  next();
+}
+
+module.exports = { requireAuth, requireAdmin };

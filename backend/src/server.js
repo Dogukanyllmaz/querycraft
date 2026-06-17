@@ -18,6 +18,7 @@ const authRoutes = require('./routes/auth');
 const connectionRoutes = require('./routes/connections');
 const databaseRoutes = require('./routes/database');
 const reportRoutes = require('./routes/reports');
+const adminRoutes = require('./routes/admin');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -64,6 +65,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/connections', connectionRoutes);
 app.use('/api/connections', databaseRoutes);   // /api/connections/:id/tables/...
 app.use('/api/reports', reportRoutes);
+app.use('/api/admin', adminRoutes);
 
 // 404 handler
 app.use((req, res) => {

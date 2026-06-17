@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { reportsService, type Report } from '@/services/reports'
+import { useAuth } from '@/context/AuthContext'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/spinner'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { ReportChart } from '@/components/ui/report-chart'
-import { Play, Download, ArrowLeft, Edit, BarChart2, Table, ChevronLeft, ChevronRight, Link } from 'lucide-react'
+import { PermissionsModal } from '@/components/ui/permissions-modal'
+import { Play, Download, ArrowLeft, Edit, BarChart2, Table, ChevronLeft, ChevronRight, Link, Users } from 'lucide-react'
 
 const PAGE_SIZE = 100
 
@@ -35,6 +37,7 @@ function safeString(val: unknown): string {
 export function ReportDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { isAdmin } = useAuth()
   const mounted = useRef(true)
 
   const [report, setReport] = useState<Report | null>(null)
@@ -45,6 +48,7 @@ export function ReportDetail() {
   const [loading, setLoading] = useState(true)
   const [view, setView] = useState<'table' | 'chart'>('table')
   const [page, setPage] = useState(1)
+  const [permissionsOpen, setPermissionsOpen] = useState(false)
 
   useEffect(() => {
     mounted.current = true
@@ -72,7 +76,6 @@ export function ReportDetail() {
       if (!mounted.current) return
       setRows(res.data.data.rows)
       setReport((r) => r ? { ...r, last_run: res.data.data.executedAt } : r)
-      // Auto-switch to chart view if configured
       if (report?.config?.chart) setView('chart')
     } catch (err: unknown) {
       if (!mounted.current) return
@@ -101,7 +104,6 @@ export function ReportDetail() {
   const lastRunLabel = safeDistance(report.last_run)
   const hasChart = Boolean(config.chart)
 
-  // Pagination
   const totalPages = rows ? Math.ceil(rows.length / PAGE_SIZE) : 1
   const pageRows = rows ? rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE) : []
 
@@ -123,9 +125,16 @@ export function ReportDetail() {
           </p>
         </div>
         <div className="flex gap-2 shrink-0 flex-wrap justify-end">
-          <Button variant="outline" onClick={() => navigate(`/reports/${id}/edit`)}>
-            <Edit className="h-4 w-4" /> Edit
-          </Button>
+          {isAdmin && (
+            <>
+              <Button variant="outline" onClick={() => setPermissionsOpen(true)}>
+                <Users className="h-4 w-4" /> Manage Access
+              </Button>
+              <Button variant="outline" onClick={() => navigate(`/reports/${id}/edit`)}>
+                <Edit className="h-4 w-4" /> Edit
+              </Button>
+            </>
+          )}
           <Button onClick={handleRun} disabled={running}>
             {running ? <Spinner className="h-4 w-4" /> : <Play className="h-4 w-4" />}
             Run
@@ -167,7 +176,6 @@ export function ReportDetail() {
                 {totalPages > 1 && <span className="ml-2 text-sm font-normal text-gray-400">(page {page}/{totalPages})</span>}
               </CardTitle>
 
-              {/* View toggle */}
               {hasChart && (
                 <div className="flex rounded-lg border border-gray-200 overflow-hidden">
                   <button
@@ -230,46 +238,27 @@ export function ReportDetail() {
                   </tbody>
                 </table>
 
-                {/* Pagination */}
                 {totalPages > 1 && (
                   <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 bg-gray-50">
                     <p className="text-xs text-gray-500">
                       {((page - 1) * PAGE_SIZE + 1).toLocaleString()}–{Math.min(page * PAGE_SIZE, rows.length).toLocaleString()} of {rows.length.toLocaleString()} rows
                     </p>
                     <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => setPage(1)}
-                        disabled={page === 1}
-                        className="px-2 py-1 text-xs rounded border border-gray-200 text-gray-500 hover:bg-gray-100 disabled:opacity-40"
-                      >«</button>
-                      <button
-                        onClick={() => setPage((p) => p - 1)}
-                        disabled={page === 1}
-                        className="p-1 rounded border border-gray-200 text-gray-500 hover:bg-gray-100 disabled:opacity-40"
-                      ><ChevronLeft className="h-3.5 w-3.5" /></button>
+                      <button onClick={() => setPage(1)} disabled={page === 1} className="px-2 py-1 text-xs rounded border border-gray-200 text-gray-500 hover:bg-gray-100 disabled:opacity-40">«</button>
+                      <button onClick={() => setPage((p) => p - 1)} disabled={page === 1} className="p-1 rounded border border-gray-200 text-gray-500 hover:bg-gray-100 disabled:opacity-40">
+                        <ChevronLeft className="h-3.5 w-3.5" />
+                      </button>
                       {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
                         const start = Math.max(1, Math.min(page - 2, totalPages - 4))
                         const p = start + i
                         return (
-                          <button
-                            key={p}
-                            onClick={() => setPage(p)}
-                            className={`px-2.5 py-1 text-xs rounded border transition-colors ${
-                              p === page ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-500 hover:bg-gray-100'
-                            }`}
-                          >{p}</button>
+                          <button key={p} onClick={() => setPage(p)} className={`px-2.5 py-1 text-xs rounded border transition-colors ${p === page ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-500 hover:bg-gray-100'}`}>{p}</button>
                         )
                       })}
-                      <button
-                        onClick={() => setPage((p) => p + 1)}
-                        disabled={page === totalPages}
-                        className="p-1 rounded border border-gray-200 text-gray-500 hover:bg-gray-100 disabled:opacity-40"
-                      ><ChevronRight className="h-3.5 w-3.5" /></button>
-                      <button
-                        onClick={() => setPage(totalPages)}
-                        disabled={page === totalPages}
-                        className="px-2 py-1 text-xs rounded border border-gray-200 text-gray-500 hover:bg-gray-100 disabled:opacity-40"
-                      >»</button>
+                      <button onClick={() => setPage((p) => p + 1)} disabled={page === totalPages} className="p-1 rounded border border-gray-200 text-gray-500 hover:bg-gray-100 disabled:opacity-40">
+                        <ChevronRight className="h-3.5 w-3.5" />
+                      </button>
+                      <button onClick={() => setPage(totalPages)} disabled={page === totalPages} className="px-2 py-1 text-xs rounded border border-gray-200 text-gray-500 hover:bg-gray-100 disabled:opacity-40">»</button>
                     </div>
                   </div>
                 )}
@@ -285,6 +274,15 @@ export function ReportDetail() {
           <p className="font-medium">Click "Run" to fetch data</p>
           {hasChart && <p className="text-sm mt-1 text-gray-300">Chart will appear automatically after running</p>}
         </div>
+      )}
+
+      {id && (
+        <PermissionsModal
+          reportId={id}
+          reportName={report.name}
+          open={permissionsOpen}
+          onClose={() => setPermissionsOpen(false)}
+        />
       )}
     </div>
   )

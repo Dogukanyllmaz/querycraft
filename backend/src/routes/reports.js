@@ -3,36 +3,46 @@
 const express = require('express');
 const router = express.Router();
 const Joi = require('joi');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { validate } = require('../middleware/validation');
 const { reportSchema } = require('../utils/validators');
 const { successResponse, errorResponse } = require('../utils/helpers');
 const { exportToCSV, exportToExcel } = require('../services/exportService');
 const {
   getReports,
+  getReportsForViewer,
   getReportById,
+  getReportByIdRaw,
   createReport,
   updateReport,
   deleteReport,
   executeReport,
   previewReport,
 } = require('../services/reportService');
+const {
+  hasAccess,
+  getPermissions,
+  grantAccess,
+  revokeAccess,
+} = require('../services/reportPermissionsService');
 
 router.use(requireAuth);
 
 // GET /api/reports
 router.get('/', (req, res) => {
-  const reports = getReports(req.userId);
+  const reports = req.userRole === 'admin'
+    ? getReports(req.userId)
+    : getReportsForViewer(req.userId);
   return successResponse(res, { reports });
 });
 
-// POST /api/reports/preview  — static route must be declared before /:id
+// POST /api/reports/preview — admin only (viewers don't build reports)
 const previewSchema = Joi.object({
   connection_id: Joi.string().uuid().required(),
   config: Joi.object().required(),
 });
 
-router.post('/preview', validate(previewSchema), async (req, res, next) => {
+router.post('/preview', requireAdmin, validate(previewSchema), async (req, res, next) => {
   try {
     const { connection_id, config } = req.body;
     const result = await previewReport(req.userId, config, connection_id);
@@ -46,13 +56,22 @@ router.post('/preview', validate(previewSchema), async (req, res, next) => {
 
 // GET /api/reports/:id
 router.get('/:id', (req, res) => {
-  const report = getReportById(req.params.id, req.userId);
+  if (req.userRole === 'admin') {
+    const report = getReportById(req.params.id, req.userId);
+    if (!report) return errorResponse(res, 'Report not found', 'NOT_FOUND', 404);
+    return successResponse(res, { report });
+  }
+  // Viewer: must have permission
+  if (!hasAccess(req.params.id, req.userId)) {
+    return errorResponse(res, 'Report not found', 'NOT_FOUND', 404);
+  }
+  const report = getReportByIdRaw(req.params.id);
   if (!report) return errorResponse(res, 'Report not found', 'NOT_FOUND', 404);
   return successResponse(res, { report });
 });
 
-// POST /api/reports
-router.post('/', validate(reportSchema), async (req, res, next) => {
+// POST /api/reports — admin only
+router.post('/', requireAdmin, validate(reportSchema), async (req, res, next) => {
   try {
     const report = createReport(req.userId, req.body);
     return successResponse(res, { report }, 'Report saved', 201);
@@ -61,8 +80,8 @@ router.post('/', validate(reportSchema), async (req, res, next) => {
   }
 });
 
-// PUT /api/reports/:id
-router.put('/:id', validate(reportSchema), async (req, res, next) => {
+// PUT /api/reports/:id — admin + owner only
+router.put('/:id', requireAdmin, validate(reportSchema), async (req, res, next) => {
   try {
     const report = updateReport(req.params.id, req.userId, req.body);
     if (!report) return errorResponse(res, 'Report not found', 'NOT_FOUND', 404);
@@ -72,17 +91,17 @@ router.put('/:id', validate(reportSchema), async (req, res, next) => {
   }
 });
 
-// DELETE /api/reports/:id
-router.delete('/:id', (req, res) => {
+// DELETE /api/reports/:id — admin + owner only
+router.delete('/:id', requireAdmin, (req, res) => {
   const deleted = deleteReport(req.params.id, req.userId);
   if (!deleted) return errorResponse(res, 'Report not found', 'NOT_FOUND', 404);
   return successResponse(res, null, 'Report deleted');
 });
 
-// POST /api/reports/:id/execute
+// POST /api/reports/:id/execute — admin owner OR viewer with permission
 router.post('/:id/execute', async (req, res, next) => {
   try {
-    const result = await executeReport(req.params.id, req.userId);
+    const result = await executeReport(req.params.id, req.userId, req.userRole);
     return successResponse(res, result);
   } catch (err) {
     if (err.statusCode === 404) return errorResponse(res, err.message, err.code, 404);
@@ -91,7 +110,7 @@ router.post('/:id/execute', async (req, res, next) => {
   }
 });
 
-// GET /api/reports/:id/export?format=csv|xlsx
+// GET /api/reports/:id/export?format=csv|xlsx — admin owner OR viewer with permission
 router.get('/:id/export', async (req, res, next) => {
   try {
     const format = (req.query.format || 'csv').toLowerCase();
@@ -99,8 +118,14 @@ router.get('/:id/export', async (req, res, next) => {
       return errorResponse(res, 'Invalid format. Use csv or xlsx.', 'INVALID_FORMAT', 400);
     }
 
-    const result = await executeReport(req.params.id, req.userId);
-    const report = getReportById(req.params.id, req.userId);
+    const result = await executeReport(req.params.id, req.userId, req.userRole);
+
+    // Get report for the filename (admin: own, viewer: raw)
+    const report = req.userRole === 'admin'
+      ? getReportById(req.params.id, req.userId)
+      : getReportByIdRaw(req.params.id);
+    if (!report) return errorResponse(res, 'Report not found', 'NOT_FOUND', 404);
+
     const filename = `${report.name.replace(/[^a-z0-9]/gi, '_')}_${Date.now()}`;
 
     if (format === 'csv') {
@@ -118,6 +143,43 @@ router.get('/:id/export', async (req, res, next) => {
     if (err.statusCode === 404) return errorResponse(res, err.message, err.code, 404);
     next(err);
   }
+});
+
+// ── Permission management (admin + owner only) ────────────────────────────────
+
+// GET /api/reports/:id/permissions
+router.get('/:id/permissions', requireAdmin, (req, res) => {
+  const report = getReportById(req.params.id, req.userId);
+  if (!report) return errorResponse(res, 'Report not found', 'NOT_FOUND', 404);
+  const permissions = getPermissions(req.params.id);
+  return successResponse(res, { permissions });
+});
+
+// POST /api/reports/:id/permissions  — body: { email }
+router.post('/:id/permissions', requireAdmin, async (req, res, next) => {
+  try {
+    const report = getReportById(req.params.id, req.userId);
+    if (!report) return errorResponse(res, 'Report not found', 'NOT_FOUND', 404);
+
+    const { email } = req.body;
+    if (!email) return errorResponse(res, 'email is required', 'VALIDATION_ERROR', 400);
+
+    const permission = grantAccess(req.params.id, email, req.userId);
+    return successResponse(res, { permission }, 'Access granted', 201);
+  } catch (err) {
+    if (err.statusCode) return errorResponse(res, err.message, err.code, err.statusCode);
+    next(err);
+  }
+});
+
+// DELETE /api/reports/:id/permissions/:userId
+router.delete('/:id/permissions/:userId', requireAdmin, (req, res) => {
+  const report = getReportById(req.params.id, req.userId);
+  if (!report) return errorResponse(res, 'Report not found', 'NOT_FOUND', 404);
+
+  const revoked = revokeAccess(req.params.id, req.params.userId);
+  if (!revoked) return errorResponse(res, 'Permission not found', 'NOT_FOUND', 404);
+  return successResponse(res, null, 'Access revoked');
 });
 
 module.exports = router;

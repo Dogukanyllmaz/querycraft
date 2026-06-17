@@ -26,6 +26,7 @@ function initDb() {
       id TEXT PRIMARY KEY,
       email VARCHAR(255) UNIQUE NOT NULL,
       password_hash VARCHAR(255) NOT NULL,
+      role TEXT NOT NULL DEFAULT 'viewer',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -65,6 +66,18 @@ function initDb() {
       row_count INTEGER,
       FOREIGN KEY (report_id) REFERENCES reports(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS report_permissions (
+      id TEXT PRIMARY KEY,
+      report_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      granted_by TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (report_id) REFERENCES reports(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (granted_by) REFERENCES users(id) ON DELETE CASCADE,
+      UNIQUE(report_id, user_id)
+    );
   `);
 
   database.exec(`
@@ -73,7 +86,18 @@ function initDb() {
     CREATE INDEX IF NOT EXISTS idx_reports_connection_id ON reports(connection_id);
     CREATE INDEX IF NOT EXISTS idx_report_runs_report_id ON report_runs(report_id);
     CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+    CREATE INDEX IF NOT EXISTS idx_rp_report ON report_permissions(report_id);
+    CREATE INDEX IF NOT EXISTS idx_rp_user ON report_permissions(user_id);
   `);
+
+  // Migration: add role column to users if missing (existing DBs)
+  const userCols = database.prepare('PRAGMA table_info(users)').all();
+  if (!userCols.some((c) => c.name === 'role')) {
+    database.exec("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'viewer'");
+    // Treat all existing users as admins — they were the original setup users
+    database.exec("UPDATE users SET role = 'admin'");
+    logger.info('Migration: added role column to users, set all existing users to admin');
+  }
 
   logger.info('Database initialized at', DB_PATH);
   return database;

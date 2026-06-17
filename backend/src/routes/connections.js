@@ -2,7 +2,7 @@
 
 const express = require('express');
 const router = express.Router();
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { validate } = require('../middleware/validation');
 const { connectionSchema } = require('../utils/validators');
 const { successResponse, errorResponse } = require('../utils/helpers');
@@ -16,7 +16,7 @@ const {
   deleteConnection,
 } = require('../services/connectionManager');
 
-router.use(requireAuth);
+router.use(requireAuth, requireAdmin);
 
 // GET /api/connections
 router.get('/', (req, res) => {

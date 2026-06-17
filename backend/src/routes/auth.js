@@ -2,7 +2,7 @@
 
 const express = require('express');
 const router = express.Router();
-const { signup, login, getUserById, generateTokens, verifyRefreshToken } = require('../services/authService');
+const { signup, login, getUserById, getUserCount, generateTokens, verifyRefreshToken } = require('../services/authService');
 const { requireAuth } = require('../middleware/auth');
 const { validate } = require('../middleware/validation');
 const { authLimiter } = require('../middleware/rateLimiter');
@@ -32,7 +32,13 @@ function clearTokenCookies(res) {
   res.clearCookie('refreshToken', COOKIE_OPTIONS);
 }
 
-// POST /api/auth/signup
+// GET /api/auth/setup-status — public, tells frontend whether first-user setup is still open
+router.get('/setup-status', (req, res) => {
+  const registrationOpen = getUserCount() === 0;
+  return successResponse(res, { registrationOpen });
+});
+
+// POST /api/auth/signup — only allowed when no users exist (first admin setup)
 router.post('/signup', authLimiter, validate(signupSchema), async (req, res, next) => {
   try {
     const { email, password } = req.body;
@@ -62,7 +68,7 @@ router.post('/logout', (req, res) => {
   return successResponse(res, null, 'Logged out successfully');
 });
 
-// POST /api/auth/refresh
+// POST /api/auth/refresh — re-issues tokens using latest role from DB
 router.post('/refresh', (req, res, next) => {
   try {
     const token = req.cookies?.refreshToken;
@@ -72,7 +78,8 @@ router.post('/refresh', (req, res, next) => {
     const user = getUserById(payload.sub);
     if (!user) return errorResponse(res, 'User not found', 'NOT_FOUND', 404);
 
-    const tokens = generateTokens(user.id);
+    // Always generate tokens with the latest role from DB (catches role changes)
+    const tokens = generateTokens(user.id, user.role);
     setTokenCookies(res, tokens.accessToken, tokens.refreshToken);
     return successResponse(res, { user }, 'Token refreshed');
   } catch (err) {

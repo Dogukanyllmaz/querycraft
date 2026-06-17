@@ -1,6 +1,11 @@
 import api from './api'
 
-export interface User { id: string; email: string; created_at: string }
+export interface User {
+  id: string
+  email: string
+  role: 'admin' | 'viewer'
+  created_at: string
+}
 
 export const authService = {
   signup: (email: string, password: string) =>
@@ -12,4 +17,7 @@ export const authService = {
   logout: () => api.post('/auth/logout'),
 
   me: () => api.get<{ data: { user: User } }>('/auth/me'),
+
+  setupStatus: () =>
+    api.get<{ data: { registrationOpen: boolean } }>('/auth/setup-status'),
 }

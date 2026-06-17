@@ -4,6 +4,7 @@ import { cache } from '@/lib/cache'
 
 interface AuthContextValue {
   user: User | null
+  isAdmin: boolean
   loading: boolean
   login: (email: string, password: string) => Promise<void>
   signup: (email: string, password: string) => Promise<void>
@@ -39,8 +40,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null)
   }, [])
 
+  const isAdmin = user?.role === 'admin'
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, signup, logout }}>
+    <AuthContext.Provider value={{ user, isAdmin, loading, login, signup, logout }}>
       {children}
     </AuthContext.Provider>
   )

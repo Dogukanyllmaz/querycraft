@@ -2,11 +2,11 @@
 
 const express = require('express');
 const router = express.Router();
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { successResponse, errorResponse } = require('../utils/helpers');
 const { getTables, getTableSchema, getTableData } = require('../services/connectionManager');
 
-router.use(requireAuth);
+router.use(requireAuth, requireAdmin);
 
 // GET /api/connections/:id/tables
 router.get('/:id/tables', async (req, res, next) => {

@@ -5,7 +5,13 @@ const knex = require('knex');
 const { db } = require('../db/init');
 const { getConnectionWithCredentials, buildKnexConfig } = require('./connectionManager');
 const { buildQuery } = require('./queryBuilder');
+const { hasAccess } = require('./reportPermissionsService');
 
+function safeParseJson(str) {
+  try { return str ? JSON.parse(str) : {} } catch { return {} }
+}
+
+// Admin: own reports only
 function getReports(userId) {
   return db()
     .prepare(
@@ -20,10 +26,22 @@ function getReports(userId) {
     .map((row) => ({ ...row, config: safeParseJson(row.config) }));
 }
 
-function safeParseJson(str) {
-  try { return str ? JSON.parse(str) : {} } catch { return {} }
+// Viewer: only reports with a permission entry
+function getReportsForViewer(userId) {
+  return db()
+    .prepare(
+      `SELECT r.id, r.name, r.connection_id, r.config, r.created_at, r.updated_at, r.last_run,
+              c.name as connection_name, c.connection_type
+       FROM reports r
+       JOIN connections c ON c.id = r.connection_id
+       JOIN report_permissions rp ON rp.report_id = r.id AND rp.user_id = ?
+       ORDER BY r.updated_at DESC`
+    )
+    .all(userId)
+    .map((row) => ({ ...row, config: safeParseJson(row.config) }));
 }
 
+// Admin: own report by ID
 function getReportById(id, userId) {
   const row = db()
     .prepare(
@@ -33,6 +51,21 @@ function getReportById(id, userId) {
        WHERE r.id = ? AND r.user_id = ?`
     )
     .get(id, userId);
+
+  if (!row) return null;
+  return { ...row, config: safeParseJson(row.config) };
+}
+
+// Internal: get report without user_id restriction (used when a viewer executes/views a report)
+function getReportByIdRaw(id) {
+  const row = db()
+    .prepare(
+      `SELECT r.*, c.name as connection_name, c.connection_type
+       FROM reports r
+       JOIN connections c ON c.id = r.connection_id
+       WHERE r.id = ?`
+    )
+    .get(id);
 
   if (!row) return null;
   return { ...row, config: safeParseJson(row.config) };
@@ -71,8 +104,20 @@ function deleteReport(id, userId) {
   return Number(result.changes) > 0;
 }
 
-async function executeReport(id, userId) {
-  const report = getReportById(id, userId);
+async function executeReport(id, userId, userRole) {
+  let report;
+  if (userRole === 'viewer') {
+    if (!hasAccess(id, userId)) {
+      const err = new Error('Report not found');
+      err.statusCode = 404;
+      err.code = 'NOT_FOUND';
+      throw err;
+    }
+    report = getReportByIdRaw(id);
+  } else {
+    report = getReportById(id, userId);
+  }
+
   if (!report) {
     const err = new Error('Report not found');
     err.statusCode = 404;
@@ -80,7 +125,8 @@ async function executeReport(id, userId) {
     throw err;
   }
 
-  const conn = getConnectionWithCredentials(report.connection_id, userId);
+  // Connection is always fetched using the admin owner's user_id (viewers don't own the connection)
+  const conn = getConnectionWithCredentials(report.connection_id, report.user_id);
   if (!conn) {
     const err = new Error('Connection not found or access denied');
     err.statusCode = 404;
@@ -129,4 +175,14 @@ async function previewReport(userId, config, connectionId) {
   }
 }
 
-module.exports = { getReports, getReportById, createReport, updateReport, deleteReport, executeReport, previewReport };
+module.exports = {
+  getReports,
+  getReportsForViewer,
+  getReportById,
+  getReportByIdRaw,
+  createReport,
+  updateReport,
+  deleteReport,
+  executeReport,
+  previewReport,
+};
