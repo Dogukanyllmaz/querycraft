@@ -19,6 +19,75 @@ import {
 } from 'lucide-react'
 
 const STEPS = ['Select Table', 'Add JOINs', 'Choose Columns', 'Add Filters', 'Sort & Limit', 'Configure Chart', 'Preview & Save']
+
+const NUMERIC_TYPES = /int|float|double|decimal|numeric|real|money|bigint|number|bit/i
+function isNumeric(type: string) { return NUMERIC_TYPES.test(type) }
+
+interface AxisColMeta { id: string; label: string; type: string; isAgg: boolean }
+
+function AxisPicker({
+  cols, selected, hint, onSelect,
+}: {
+  cols: AxisColMeta[]
+  selected: string
+  hint: 'numeric' | 'categorical'
+  onSelect: (id: string) => void
+}) {
+  const [search, setSearch] = useState('')
+  const filtered = search
+    ? cols.filter((c) => c.id.toLowerCase().includes(search.toLowerCase()))
+    : cols
+
+  return (
+    <div className="space-y-2">
+      {cols.length > 6 && (
+        <input
+          type="text"
+          placeholder="Filter columns…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="w-full text-xs px-3 py-1.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+        />
+      )}
+      <div className="max-h-52 overflow-y-auto pr-0.5 space-y-1">
+        {filtered.length === 0 && (
+          <p className="text-xs text-gray-400 text-center py-4">No columns match.</p>
+        )}
+        {filtered.map((col) => {
+          const numeric  = col.isAgg || isNumeric(col.type)
+          const goodFit  = hint === 'numeric' ? numeric : !numeric
+          const isSelected = selected === col.id
+          return (
+            <button
+              key={col.id}
+              type="button"
+              onClick={() => onSelect(col.id)}
+              className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg border text-left transition-all ${
+                isSelected
+                  ? 'bg-blue-600 border-blue-600 text-white shadow-sm'
+                  : goodFit
+                  ? 'border-gray-200 hover:border-blue-300 hover:bg-blue-50 bg-white'
+                  : 'border-gray-100 hover:border-gray-200 bg-gray-50/50 opacity-70'
+              }`}
+            >
+              <span className={`text-sm font-mono font-medium truncate ${isSelected ? 'text-white' : 'text-gray-800'}`}>
+                {col.label}
+              </span>
+              <span className={`text-[11px] shrink-0 px-1.5 py-0.5 rounded font-medium ${
+                isSelected ? 'bg-blue-500 text-blue-100' :
+                col.isAgg  ? 'bg-violet-100 text-violet-600' :
+                numeric    ? 'bg-green-100 text-green-700' :
+                             'bg-gray-100 text-gray-500'
+              }`}>
+                {col.isAgg ? col.type : (col.type || 'text')}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
 const OPERATORS = ['=', '!=', '>', '<', '>=', '<=', 'LIKE', 'NOT LIKE', 'IS NULL', 'IS NOT NULL', 'IN']
 const JOIN_TYPES: { value: ReportJoin['type']; label: string; desc: string; color: string }[] = [
   { value: 'INNER', label: 'INNER', desc: 'Only matching rows', color: 'bg-blue-600 text-white' },
@@ -280,6 +349,19 @@ export function ReportBuilder() {
     () => [...config.columns, ...config.aggregations.map((a) => a.alias)],
     [config.columns, config.aggregations]
   )
+
+  // Rich metadata for axis pickers: id, display label, data type, isAgg flag
+  const axisColsMeta = useMemo(() => {
+    const colMap = new Map(allColumns.map((c) => [c.id, c]))
+    const cols = config.columns.map((id) => {
+      const meta = colMap.get(id)
+      return { id, label: meta?.label ?? id, type: meta?.type ?? '', isAgg: false }
+    })
+    const aggs = config.aggregations.map((a) => ({
+      id: a.alias, label: a.alias, type: `${a.fn}(${a.column})`, isAgg: true,
+    }))
+    return [...cols, ...aggs]
+  }, [config.columns, config.aggregations, allColumns])
 
   // ── Filter helpers ────────────────────────────────────────────────────────
 
@@ -867,28 +949,36 @@ export function ReportBuilder() {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-1.5">
-                      <Label>{chart.type === 'pie' ? 'Name Column (categories)' : 'X Axis'}</Label>
-                      <Select value={chart.xAxis} onValueChange={(v) => setConfig((c) => ({ ...c, chart: c.chart ? { ...c.chart, xAxis: v } : undefined }))}>
-                        <SelectTrigger><SelectValue placeholder="Select column" /></SelectTrigger>
-                        <SelectContent>
-                          {allAxisCols.map((col) => (
-                            <SelectItem key={col} value={col}><span className="font-mono">{col}</span></SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                    {/* X Axis picker */}
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Label className="text-sm font-semibold">
+                          {chart.type === 'pie' ? 'Name Column' : 'X Axis'}
+                        </Label>
+                        <span className="text-xs text-gray-400">{chart.type === 'pie' ? 'categories' : 'labels / categories'}</span>
+                      </div>
+                      <AxisPicker
+                        cols={axisColsMeta}
+                        selected={chart.xAxis}
+                        hint="categorical"
+                        onSelect={(v) => setConfig((c) => ({ ...c, chart: c.chart ? { ...c.chart, xAxis: v } : undefined }))}
+                      />
                     </div>
-                    <div className="space-y-1.5">
-                      <Label>{chart.type === 'pie' ? 'Value Column (numeric)' : 'Y Axis (numeric)'}</Label>
-                      <Select value={chart.yAxis} onValueChange={(v) => setConfig((c) => ({ ...c, chart: c.chart ? { ...c.chart, yAxis: v } : undefined }))}>
-                        <SelectTrigger><SelectValue placeholder="Select column" /></SelectTrigger>
-                        <SelectContent>
-                          {allAxisCols.map((col) => (
-                            <SelectItem key={col} value={col}><span className="font-mono">{col}</span></SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                    {/* Y Axis picker */}
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Label className="text-sm font-semibold">
+                          {chart.type === 'pie' ? 'Value Column' : 'Y Axis'}
+                        </Label>
+                        <span className="text-xs text-gray-400">numeric</span>
+                      </div>
+                      <AxisPicker
+                        cols={axisColsMeta}
+                        selected={chart.yAxis}
+                        hint="numeric"
+                        onSelect={(v) => setConfig((c) => ({ ...c, chart: c.chart ? { ...c.chart, yAxis: v } : undefined }))}
+                      />
                     </div>
                   </div>
 
