@@ -244,20 +244,21 @@ export function ReportChart({ chartConfig, rows }: Props) {
             nameKey="name"
             cx="50%"
             cy="46%"
-            innerRadius={72}
-            outerRadius={120}
+            innerRadius={80}
+            outerRadius={130}
             paddingAngle={2}
             isAnimationActive={animate}
-            label={({ name, percent }) =>
-              percent > 0.05 ? `${name} ${(percent * 100).toFixed(0)}%` : ''
-            }
-            labelLine={{ strokeWidth: 1, stroke: '#cbd5e1' }}
           />
           <Tooltip
             contentStyle={TOOLTIP_STYLE}
             formatter={(v) => [fmt(v), yAxis]}
           />
-          <Legend wrapperStyle={LEGEND_STYLE} />
+          <Legend
+            wrapperStyle={LEGEND_STYLE}
+            formatter={(value: string) =>
+              value.length > 24 ? `${value.slice(0, 22)}…` : value
+            }
+          />
         </PieChart>
       </ResponsiveContainer>
     </div>
