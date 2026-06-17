@@ -8,17 +8,51 @@ import {
 } from 'recharts'
 import type { ChartConfig } from '@/services/reports'
 
-const COLORS = ['#2563eb', '#7c3aed', '#059669', '#d97706', '#dc2626', '#0891b2', '#ea580c', '#84cc16']
-const CHART_HEIGHT    = 340
-const ANIMATE_LIMIT   = 100   // disable animation above this row count
-const SAMPLE_LIMIT    = 500   // downsample above this — charts can't render 1000+ bars usefully
+// Professional enterprise data-viz palette — WCAG AA contrast, hue-varied, colorblind-safe
+const COLORS = [
+  '#3b82f6', // blue-500    — primary
+  '#10b981', // emerald-500 — secondary
+  '#8b5cf6', // violet-500  — tertiary
+  '#f59e0b', // amber-500   — quaternary
+  '#06b6d4', // cyan-500    — quinary
+  '#f43f5e', // rose-500    — sixth
+  '#84cc16', // lime-500    — seventh
+  '#ec4899', // pink-500    — eighth
+]
 
-const TICK_STYLE    = { fontSize: 11, fill: '#6b7280' }
-const GRID_STYLE    = { strokeDasharray: '3 3', stroke: '#f1f5f9' }
-const CHART_MARGIN  = { top: 8, right: 24, left: 0, bottom: 40 }
-const TOOLTIP_STYLE = { fontSize: 12, borderRadius: 8, border: '1px solid #e5e7eb' }
+const CHART_HEIGHT  = 360
+const ANIMATE_LIMIT = 100
+const SAMPLE_LIMIT  = 500
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+const TICK_STYLE = { fontSize: 11, fill: '#94a3b8', fontFamily: 'inherit' }
+
+const GRID_STYLE = {
+  strokeDasharray: '0',
+  stroke: '#f1f5f9',
+  strokeWidth: 1,
+}
+
+const CHART_MARGIN  = { top: 10, right: 16, left: 0, bottom: 44 }
+
+const TOOLTIP_STYLE: React.CSSProperties = {
+  fontSize: 12,
+  fontFamily: 'inherit',
+  borderRadius: 10,
+  border: '1px solid #e2e8f0',
+  boxShadow: '0 4px 12px 0 rgb(0 0 0 / 0.08)',
+  padding: '8px 12px',
+  color: '#0f172a',
+  backgroundColor: '#ffffff',
+}
+
+const LEGEND_STYLE: React.CSSProperties = {
+  fontSize: 12,
+  color: '#64748b',
+  paddingTop: 8,
+  fontFamily: 'inherit',
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
 
 function toNum(v: unknown): number {
   if (typeof v === 'bigint') return Number(v)
@@ -34,7 +68,6 @@ function fmt(v: unknown): string {
   return n.toLocaleString(undefined, { maximumFractionDigits: 2 })
 }
 
-/** Convert ALL BigInt values in a row to Number so recharts never sees a BigInt. */
 function sanitize(row: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const [k, v] of Object.entries(row)) {
@@ -43,14 +76,35 @@ function sanitize(row: Record<string, unknown>): Record<string, unknown> {
   return out
 }
 
-/** Evenly sample arr down to at most maxLen items. */
 function sample<T>(arr: T[], maxLen: number): T[] {
   if (arr.length <= maxLen) return arr
   const step = arr.length / maxLen
   return Array.from({ length: maxLen }, (_, i) => arr[Math.floor(i * step)])
 }
 
-// ── Component ──────────────────────────────────────────────────────────────
+// ── Shared axis props ──────────────────────────────────────────────────────────
+
+function xAxisProps(xAxis: string) {
+  return {
+    dataKey: xAxis,
+    tick: TICK_STYLE,
+    angle: -30 as const,
+    textAnchor: 'end' as const,
+    interval: 'preserveStartEnd' as const,
+    tickLine: false,
+    axisLine: { stroke: '#e2e8f0' },
+  }
+}
+
+const yProps = {
+  tick: TICK_STYLE,
+  width: 64,
+  tickFormatter: fmt,
+  tickLine: false,
+  axisLine: false,
+}
+
+// ── Component ──────────────────────────────────────────────────────────────────
 
 interface Props {
   chartConfig: ChartConfig
@@ -59,64 +113,49 @@ interface Props {
 
 export function ReportChart({ chartConfig, rows }: Props) {
   const { type, xAxis, yAxis } = chartConfig
+  const gradId = useRef(`qg${Math.random().toString(36).slice(2, 8)}`).current
 
-  // Stable gradient ID per component instance (avoids SVG id clash with multiple charts)
-  const gradId = useRef(`ag${Math.random().toString(36).slice(2, 8)}`).current
-
-  // Sanitize BigInt, coerce yAxis to number, then sample for performance
   const data = useMemo(() => {
     const clean = rows.map((r) => {
       const s = sanitize(r)
-      s[yAxis] = toNum(s[yAxis])   // ensure Y is always numeric
+      s[yAxis] = toNum(s[yAxis])
       return s
     })
     return sample(clean, SAMPLE_LIMIT)
   }, [rows, yAxis])
 
-  const animate   = data.length <= ANIMATE_LIMIT
-  const sampled   = data.length < rows.length
-  const showDots  = type === 'line' && data.length <= 60
+  const animate  = data.length <= ANIMATE_LIMIT
+  const sampled  = data.length < rows.length
+  const showDots = type === 'line' && data.length <= 60
 
   if (!data.length) {
-    return <p className="text-center py-8 text-sm text-gray-400">No data to chart.</p>
+    return <EmptyChart />
   }
 
-  const sharedProps = {
-    data,
-    margin: CHART_MARGIN,
+  const shared = { data, margin: CHART_MARGIN }
+  const xProps = xAxisProps(xAxis)
+  const tooltipProps = {
+    contentStyle: TOOLTIP_STYLE,
+    formatter: (v: unknown) => [fmt(v), yAxis],
+    cursor: { fill: 'rgba(59,130,246,0.04)' },
   }
 
-  const xAxisProps = {
-    dataKey: xAxis,
-    tick: TICK_STYLE,
-    angle: -30 as const,
-    textAnchor: 'end' as const,
-    interval: 'preserveStartEnd' as const,
-  }
-
-  const yAxisProps = {
-    tick: TICK_STYLE,
-    width: 68,
-    tickFormatter: fmt,
-  }
-
-  // ── Bar ──────────────────────────────────────────────────────────────────
-
+  // ── Bar ─────────────────────────────────────────────────────────────────────
   if (type === 'bar') return (
-    <div>
+    <div className="animate-fade-in">
       {sampled && <SampleNote total={rows.length} shown={data.length} />}
       <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
-        <BarChart {...sharedProps}>
-          <CartesianGrid {...GRID_STYLE} />
-          <XAxis {...xAxisProps} />
-          <YAxis {...yAxisProps} />
-          <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => [fmt(v), yAxis]} />
-          <Legend wrapperStyle={{ fontSize: 12 }} />
+        <BarChart {...shared}>
+          <CartesianGrid {...GRID_STYLE} vertical={false} />
+          <XAxis {...xProps} />
+          <YAxis {...yProps} />
+          <Tooltip {...tooltipProps} />
+          <Legend wrapperStyle={LEGEND_STYLE} />
           <Bar
             dataKey={yAxis}
             fill={COLORS[0]}
-            radius={[4, 4, 0, 0]}
-            maxBarSize={72}
+            radius={[5, 5, 0, 0]}
+            maxBarSize={56}
             isAnimationActive={animate}
           />
         </BarChart>
@@ -124,25 +163,24 @@ export function ReportChart({ chartConfig, rows }: Props) {
     </div>
   )
 
-  // ── Line ─────────────────────────────────────────────────────────────────
-
+  // ── Line ─────────────────────────────────────────────────────────────────────
   if (type === 'line') return (
-    <div>
+    <div className="animate-fade-in">
       {sampled && <SampleNote total={rows.length} shown={data.length} />}
       <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
-        <LineChart {...sharedProps}>
-          <CartesianGrid {...GRID_STYLE} />
-          <XAxis {...xAxisProps} />
-          <YAxis {...yAxisProps} />
-          <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => [fmt(v), yAxis]} />
-          <Legend wrapperStyle={{ fontSize: 12 }} />
+        <LineChart {...shared}>
+          <CartesianGrid {...GRID_STYLE} vertical={false} />
+          <XAxis {...xProps} />
+          <YAxis {...yProps} />
+          <Tooltip {...tooltipProps} />
+          <Legend wrapperStyle={LEGEND_STYLE} />
           <Line
             type="monotone"
             dataKey={yAxis}
             stroke={COLORS[0]}
-            strokeWidth={2}
-            dot={showDots}
-            activeDot={{ r: 5 }}
+            strokeWidth={2.5}
+            dot={showDots ? { r: 3.5, fill: COLORS[0], strokeWidth: 0 } : false}
+            activeDot={{ r: 5, fill: COLORS[0], strokeWidth: 0 }}
             isAnimationActive={animate}
           />
         </LineChart>
@@ -150,30 +188,31 @@ export function ReportChart({ chartConfig, rows }: Props) {
     </div>
   )
 
-  // ── Area ─────────────────────────────────────────────────────────────────
-
+  // ── Area ─────────────────────────────────────────────────────────────────────
   if (type === 'area') return (
-    <div>
+    <div className="animate-fade-in">
       {sampled && <SampleNote total={rows.length} shown={data.length} />}
       <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
-        <AreaChart {...sharedProps}>
+        <AreaChart {...shared}>
           <defs>
             <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%"  stopColor={COLORS[0]} stopOpacity={0.2} />
-              <stop offset="95%" stopColor={COLORS[0]} stopOpacity={0}   />
+              <stop offset="0%"   stopColor={COLORS[0]} stopOpacity={0.18} />
+              <stop offset="100%" stopColor={COLORS[0]} stopOpacity={0}    />
             </linearGradient>
           </defs>
-          <CartesianGrid {...GRID_STYLE} />
-          <XAxis {...xAxisProps} />
-          <YAxis {...yAxisProps} />
-          <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => [fmt(v), yAxis]} />
-          <Legend wrapperStyle={{ fontSize: 12 }} />
+          <CartesianGrid {...GRID_STYLE} vertical={false} />
+          <XAxis {...xProps} />
+          <YAxis {...yProps} />
+          <Tooltip {...tooltipProps} />
+          <Legend wrapperStyle={LEGEND_STYLE} />
           <Area
             type="monotone"
             dataKey={yAxis}
             stroke={COLORS[0]}
             fill={`url(#${gradId})`}
-            strokeWidth={2}
+            strokeWidth={2.5}
+            dot={false}
+            activeDot={{ r: 5, fill: COLORS[0], strokeWidth: 0 }}
             isAnimationActive={animate}
           />
         </AreaChart>
@@ -181,23 +220,21 @@ export function ReportChart({ chartConfig, rows }: Props) {
     </div>
   )
 
-  // ── Pie ───────────────────────────────────────────────────────────────────
-  // recharts 3.x: Cell is deprecated — embed fill in the data record instead.
-
-  const pieData = data.slice(0, 20).map((r, i) => ({
+  // ── Donut / Pie ───────────────────────────────────────────────────────────────
+  const pieData = data.slice(0, 12).map((r, i) => ({
     name:  String(r[xAxis] ?? '(empty)'),
     value: toNum(r[yAxis]),
     fill:  COLORS[i % COLORS.length],
   })).filter((d) => d.value > 0)
 
   if (!pieData.length) {
-    return <p className="text-center py-8 text-sm text-gray-400">No positive values to display as pie chart.</p>
+    return <EmptyChart message="No positive values to display." />
   }
 
   return (
-    <div>
-      {rows.length > 20 && (
-        <SampleNote total={rows.length} shown={Math.min(20, pieData.length)} label="slices (top 20 by row order)" />
+    <div className="animate-fade-in">
+      {rows.length > 12 && (
+        <SampleNote total={rows.length} shown={Math.min(12, pieData.length)} label="slices shown (top 12)" />
       )}
       <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
         <PieChart>
@@ -206,27 +243,44 @@ export function ReportChart({ chartConfig, rows }: Props) {
             dataKey="value"
             nameKey="name"
             cx="50%"
-            cy="48%"
+            cy="46%"
+            innerRadius={72}
             outerRadius={120}
+            paddingAngle={2}
             isAnimationActive={animate}
-            label={({ name, percent }) => percent > 0.04 ? `${name} (${(percent * 100).toFixed(0)}%)` : ''}
-            labelLine={false}
+            label={({ name, percent }) =>
+              percent > 0.05 ? `${name} ${(percent * 100).toFixed(0)}%` : ''
+            }
+            labelLine={{ strokeWidth: 1, stroke: '#cbd5e1' }}
           />
           <Tooltip
             contentStyle={TOOLTIP_STYLE}
             formatter={(v) => [fmt(v), yAxis]}
           />
-          <Legend wrapperStyle={{ fontSize: 12 }} />
+          <Legend wrapperStyle={LEGEND_STYLE} />
         </PieChart>
       </ResponsiveContainer>
     </div>
   )
 }
 
+// ── Sub-components ─────────────────────────────────────────────────────────────
+
+function EmptyChart({ message = 'No data to chart.' }: { message?: string }) {
+  return (
+    <div className="flex items-center justify-center h-48 rounded-xl bg-slate-50 border border-slate-100">
+      <p className="text-sm text-slate-400">{message}</p>
+    </div>
+  )
+}
+
 function SampleNote({ total, shown, label = 'rows shown' }: { total: number; shown: number; label?: string }) {
   return (
-    <p className="text-xs text-amber-600 bg-amber-50 border border-amber-100 rounded px-3 py-1.5 mb-2">
-      Showing {shown.toLocaleString()} {label} of {total.toLocaleString()} total — chart sampled for performance.
-    </p>
+    <div className="flex items-center gap-2 mb-3 px-3 py-2 rounded-lg bg-amber-50 border border-amber-100">
+      <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0" />
+      <p className="text-xs text-amber-700">
+        Showing {shown.toLocaleString()} {label} of {total.toLocaleString()} total — sampled for performance.
+      </p>
+    </div>
   )
 }

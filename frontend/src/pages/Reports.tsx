@@ -2,11 +2,11 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { reportsService, type Report } from '@/services/reports'
 import { useAuth } from '@/context/AuthContext'
-import { Card, CardContent } from '@/components/ui/card'
+import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/spinner'
-import { FileText, Plus, Trash2, Play, Download, Edit, Share2 } from 'lucide-react'
+import { FileText, Plus, Trash2, Play, Download, Edit, Share2, Clock, Columns3, Filter } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 
 export function Reports() {
@@ -22,8 +22,9 @@ export function Reports() {
       .finally(() => setLoading(false))
   }, [])
 
-  async function handleDelete(id: string) {
-    if (!confirm('Delete this report?')) return
+  async function handleDelete(id: string, e: React.MouseEvent) {
+    e.stopPropagation()
+    if (!confirm('Delete this report? This cannot be undone.')) return
     setDeleting(id)
     try {
       await reportsService.delete(id)
@@ -33,92 +34,150 @@ export function Reports() {
     }
   }
 
-  if (loading) return <div className="flex justify-center py-16"><Spinner className="h-8 w-8" /></div>
+  if (loading) return (
+    <div className="flex justify-center py-20">
+      <Spinner className="h-7 w-7" />
+    </div>
+  )
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="space-y-6 animate-fade-in">
+      {/* Header */}
+      <div className="flex items-center justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-gray-900">Reports</h2>
-          <p className="text-gray-500 mt-1">
-            {isAdmin ? 'View and manage your saved reports.' : 'Reports shared with you.'}
+          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Reports</h1>
+          <p className="text-slate-500 mt-1 text-sm">
+            {isAdmin ? 'Build and manage SQL reports.' : 'Reports shared with you.'}
           </p>
         </div>
         {isAdmin && (
-          <Button onClick={() => navigate('/reports/new')}>
+          <Button onClick={() => navigate('/reports/new')} className="shrink-0">
             <Plus className="h-4 w-4" /> New Report
           </Button>
         )}
       </div>
 
+      {/* Empty state */}
       {reports.length === 0 ? (
-        <div className="text-center py-16 text-gray-400">
-          <FileText className="h-12 w-12 mx-auto mb-3 opacity-30" />
-          <p className="font-medium">No reports yet</p>
-          {isAdmin ? (
-            <>
-              <p className="text-sm mt-1">Create your first report using the step-by-step wizard.</p>
-              <Button className="mt-4" onClick={() => navigate('/reports/new')}>Create Report</Button>
-            </>
-          ) : (
-            <p className="text-sm mt-1">No reports have been shared with you yet.<br />Contact your administrator to get access.</p>
-          )}
-        </div>
+        <Card>
+          <div className="flex flex-col items-center py-16 px-6 text-center gap-4">
+            <div className="bg-slate-50 rounded-2xl p-5">
+              <FileText className="h-8 w-8 text-slate-300" />
+            </div>
+            <div className="space-y-1.5">
+              <p className="font-semibold text-slate-800">
+                {isAdmin ? 'No reports yet' : 'No reports shared with you'}
+              </p>
+              <p className="text-sm text-slate-400 max-w-sm">
+                {isAdmin
+                  ? 'Create your first report using the step-by-step visual wizard.'
+                  : 'Contact your administrator to get access to reports.'}
+              </p>
+            </div>
+            {isAdmin && (
+              <Button onClick={() => navigate('/reports/new')}>
+                <Plus className="h-4 w-4" /> Create Report
+              </Button>
+            )}
+          </div>
+        </Card>
       ) : (
-        <div className="grid gap-4">
+        <div className="grid gap-2.5">
           {reports.map((r) => (
-            <Card key={r.id} className="hover:border-blue-200 transition-colors">
-              <CardContent className="p-4 flex items-center justify-between">
-                <div className="flex items-center gap-4 min-w-0">
-                  <div className="bg-purple-50 rounded-lg p-2 shrink-0">
-                    <FileText className="h-5 w-5 text-purple-600" />
+            <Card
+              key={r.id}
+              className="hover:border-blue-200 hover:shadow-md transition-all duration-150 cursor-pointer group"
+              onClick={() => navigate(`/reports/${r.id}`)}
+            >
+              <div className="flex items-center gap-4 p-4">
+                {/* Icon */}
+                <div className="bg-violet-50 rounded-lg p-2.5 shrink-0 group-hover:bg-violet-100 transition-colors">
+                  <FileText className="h-4.5 w-4.5 text-violet-600" style={{ height: '1.125rem', width: '1.125rem' }} />
+                </div>
+
+                {/* Main info */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="font-semibold text-slate-900 text-sm truncate">{r.name}</p>
+                    {!isAdmin && (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium bg-emerald-50 text-emerald-700 ring-1 ring-emerald-600/10">
+                        <Share2 className="h-2.5 w-2.5" /> Shared
+                      </span>
+                    )}
                   </div>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="font-medium text-gray-900">{r.name}</p>
-                      {!isAdmin && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700 border border-green-100">
-                          <Share2 className="h-3 w-3" /> Shared
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-sm text-gray-400">
-                      {r.connection_name} · Table: <span className="font-mono">{r.config.table}</span> ·{' '}
+                  <div className="flex items-center gap-3 mt-1 flex-wrap">
+                    <span className="text-xs text-slate-400 font-mono">{r.connection_name}</span>
+                    <span className="text-slate-200 text-xs">·</span>
+                    <span className="text-xs text-slate-400 font-mono">{r.config.table}</span>
+                    <span className="text-slate-200 text-xs">·</span>
+                    <span className="flex items-center gap-1 text-xs text-slate-400">
+                      <Clock className="h-3 w-3" />
                       {r.last_run
-                        ? `Last run ${formatDistanceToNow(new Date(r.last_run))} ago`
+                        ? formatDistanceToNow(new Date(r.last_run), { addSuffix: true })
                         : 'Never run'}
-                    </p>
+                    </span>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 shrink-0 ml-4">
-                  <Badge variant="secondary">{r.config.columns.length} cols</Badge>
+
+                {/* Badges */}
+                <div className="hidden sm:flex items-center gap-1.5 shrink-0">
+                  <Badge variant="secondary" className="gap-1">
+                    <Columns3 className="h-3 w-3" /> {r.config.columns.length}
+                  </Badge>
                   {r.config.filters.length > 0 && (
-                    <Badge variant="outline">{r.config.filters.length} filters</Badge>
+                    <Badge variant="outline" className="gap-1">
+                      <Filter className="h-3 w-3" /> {r.config.filters.length}
+                    </Badge>
                   )}
-                  <Button size="sm" variant="outline" onClick={() => navigate(`/reports/${r.id}`)}>
+                </div>
+
+                {/* Actions */}
+                <div className="flex items-center gap-1 shrink-0 ml-1" onClick={(e) => e.stopPropagation()}>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8"
+                    onClick={(e) => { e.stopPropagation(); navigate(`/reports/${r.id}`) }}
+                  >
                     <Play className="h-3.5 w-3.5" /> Run
                   </Button>
+
                   {isAdmin && (
-                    <Button size="sm" variant="ghost" onClick={() => navigate(`/reports/${r.id}/edit`)} title="Edit report">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-8 w-8 p-0"
+                      title="Edit report"
+                      onClick={(e) => { e.stopPropagation(); navigate(`/reports/${r.id}/edit`) }}
+                    >
                       <Edit className="h-3.5 w-3.5" />
                     </Button>
                   )}
-                  <a href={reportsService.exportUrl(r.id, 'csv')} download>
-                    <Button size="sm" variant="ghost" title="Export CSV">
+
+                  <a
+                    href={reportsService.exportUrl(r.id, 'csv')}
+                    download
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <Button size="sm" variant="ghost" className="h-8 w-8 p-0" title="Export CSV">
                       <Download className="h-3.5 w-3.5" />
                     </Button>
                   </a>
+
                   {isAdmin && (
                     <button
-                      onClick={() => handleDelete(r.id)}
+                      onClick={(e) => handleDelete(r.id, e)}
                       disabled={deleting === r.id}
-                      className="text-gray-400 hover:text-red-500 transition-colors disabled:opacity-50"
+                      className="h-8 w-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-all duration-150 disabled:opacity-40"
+                      title="Delete report"
                     >
-                      {deleting === r.id ? <Spinner className="h-4 w-4" /> : <Trash2 className="h-4 w-4" />}
+                      {deleting === r.id
+                        ? <Spinner className="h-3.5 w-3.5" />
+                        : <Trash2 className="h-3.5 w-3.5" />}
                     </button>
                   )}
                 </div>
-              </CardContent>
+              </div>
             </Card>
           ))}
         </div>
