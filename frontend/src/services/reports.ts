@@ -6,12 +6,19 @@ export interface ReportFilter {
   value: string | number | null
 }
 
+export interface ReportJoin {
+  table: string
+  type: 'INNER' | 'LEFT' | 'RIGHT'
+  on: { leftColumn: string; rightColumn: string }
+}
+
 export interface ReportConfig {
   table: string
   columns: string[]
   filters: ReportFilter[]
   orderBy?: { column: string; direction: 'ASC' | 'DESC' }
   limit: number
+  joins: ReportJoin[]
 }
 
 export interface Report {

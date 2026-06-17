@@ -3,8 +3,8 @@
 const { FILTER_OPERATORS, SORT_DIRECTIONS, MAX_ROWS_PER_QUERY } = require('../config/constants');
 
 function validateIdentifier(name) {
-  // Allow only alphanumeric, underscore, and spaces (for quoted identifiers)
-  if (!/^[a-zA-Z0-9_\s]+$/.test(name)) {
+  // Allow: word chars only, or "table.column" qualified form
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?$/.test(name)) {
     const err = new Error(`Invalid identifier: ${name}`);
     err.statusCode = 400;
     err.code = 'INVALID_IDENTIFIER';
@@ -12,8 +12,10 @@ function validateIdentifier(name) {
   }
 }
 
+const JOIN_TYPES = { INNER: 'join', LEFT: 'leftJoin', RIGHT: 'rightJoin' };
+
 function buildQuery(k, config) {
-  const { table, columns, filters = [], orderBy, limit = 1000 } = config;
+  const { table, columns, filters = [], orderBy, limit = 1000, joins = [] } = config;
 
   validateIdentifier(table);
   columns.forEach(validateIdentifier);
@@ -21,6 +23,14 @@ function buildQuery(k, config) {
   const safeLimit = Math.min(parseInt(limit) || 1000, MAX_ROWS_PER_QUERY);
 
   let query = k(table).select(columns).limit(safeLimit);
+
+  for (const join of joins) {
+    validateIdentifier(join.table);
+    validateIdentifier(join.on.leftColumn);
+    validateIdentifier(join.on.rightColumn);
+    const joinFn = JOIN_TYPES[join.type] ?? 'join';
+    query = query[joinFn](join.table, join.on.leftColumn, join.on.rightColumn);
+  }
 
   for (const filter of filters) {
     validateIdentifier(filter.column);

@@ -40,6 +40,16 @@ const reportSchema = Joi.object({
       direction: Joi.string().valid('ASC', 'DESC').default('ASC'),
     }).optional(),
     limit: Joi.number().integer().min(1).max(10000).default(1000),
+    joins: Joi.array().items(
+      Joi.object({
+        table: Joi.string().min(1).required(),
+        type: Joi.string().valid('INNER', 'LEFT', 'RIGHT').required(),
+        on: Joi.object({
+          leftColumn: Joi.string().required(),
+          rightColumn: Joi.string().required(),
+        }).required(),
+      })
+    ).default([]),
   }).required(),
 });
 
