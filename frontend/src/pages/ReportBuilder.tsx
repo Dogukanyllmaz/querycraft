@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { connectionsService, type Connection, type TableColumn } from '@/services/connections'
 import { TablePicker } from '@/components/ui/table-picker'
@@ -11,17 +11,21 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/spinner'
-import { ChevronRight, ChevronLeft, Plus, Trash2, Check, Link, BarChart2, LineChart, AreaChart, PieChart } from 'lucide-react'
 import { ReportChart } from '@/components/ui/report-chart'
 import type { ChartConfig } from '@/services/reports'
+import {
+  ChevronRight, ChevronLeft, Plus, Trash2, Check,
+  Link, BarChart2, LineChart, AreaChart, PieChart, AlertCircle,
+} from 'lucide-react'
 
 const STEPS = ['Select Table', 'Add JOINs', 'Choose Columns', 'Add Filters', 'Sort & Limit', 'Configure Chart', 'Preview & Save']
-const OPERATORS = ['=', '!=', '>', '<', '>=', '<=', 'LIKE', 'NOT LIKE', 'IS NULL', 'IS NOT NULL']
-const JOIN_TYPES = [
-  { value: 'INNER', label: 'INNER JOIN' },
-  { value: 'LEFT', label: 'LEFT JOIN' },
-  { value: 'RIGHT', label: 'RIGHT JOIN' },
+const OPERATORS = ['=', '!=', '>', '<', '>=', '<=', 'LIKE', 'NOT LIKE', 'IS NULL', 'IS NOT NULL', 'IN']
+const JOIN_TYPES: { value: ReportJoin['type']; label: string; desc: string; color: string }[] = [
+  { value: 'INNER', label: 'INNER', desc: 'Only matching rows', color: 'bg-blue-600 text-white' },
+  { value: 'LEFT',  label: 'LEFT',  desc: 'All left rows',     color: 'bg-violet-600 text-white' },
+  { value: 'RIGHT', label: 'RIGHT', desc: 'All right rows',    color: 'bg-emerald-600 text-white' },
 ]
+const AGG_FNS: AggregationConfig['fn'][] = ['COUNT', 'SUM', 'AVG', 'MIN', 'MAX']
 
 function StepIndicator({ current }: { current: number }) {
   return (
@@ -29,7 +33,7 @@ function StepIndicator({ current }: { current: number }) {
       {STEPS.map((label, i) => (
         <div key={i} className="flex items-center gap-1.5 shrink-0">
           <div className={`flex items-center justify-center w-7 h-7 rounded-full text-xs font-semibold transition-colors ${
-            i < current ? 'bg-blue-600 text-white' :
+            i < current  ? 'bg-blue-600 text-white' :
             i === current ? 'bg-blue-600 text-white ring-2 ring-blue-200' :
             'bg-gray-200 text-gray-500'
           }`}>
@@ -47,43 +51,47 @@ function StepIndicator({ current }: { current: number }) {
 
 interface ColumnItem { id: string; label: string; type: string; group: string }
 
-export function ReportBuilder() {
-  const navigate = useNavigate()
-  const { id } = useParams<{ id?: string }>()
-  const [searchParams] = useSearchParams()
-  const isEdit = Boolean(id)
+const EMPTY_CONFIG: ReportConfig = {
+  table: '', columns: [], filters: [], orderBy: undefined, limit: 1000,
+  joins: [], chart: undefined, aggregations: [],
+}
 
-  const [step, setStep] = useState(0)
-  const [aggTab, setAggTab] = useState<'columns' | 'aggregations'>('columns')
+export function ReportBuilder() {
+  const navigate  = useNavigate()
+  const { id }    = useParams<{ id?: string }>()
+  const [searchParams] = useSearchParams()
+  const isEdit    = Boolean(id)
+  const mounted   = useRef(true)
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
+
+  const [step,       setStep]       = useState(0)
+  const [aggTab,     setAggTab]     = useState<'columns' | 'aggregations'>('columns')
   const [connections, setConnections] = useState<Connection[]>([])
   const [connectionId, setConnectionId] = useState('')
-  const [tables, setTables] = useState<string[]>([])
-  const [schema, setSchema] = useState<TableColumn[]>([])
+  const [tables,     setTables]     = useState<string[]>([])
+  const [schema,     setSchema]     = useState<TableColumn[]>([])
   const [joinSchemas, setJoinSchemas] = useState<Map<string, TableColumn[]>>(new Map())
+  const [loadingJoinSchemas, setLoadingJoinSchemas] = useState<Set<string>>(new Set())
   const [previewRows, setPreviewRows] = useState<Record<string, unknown>[] | null>(null)
   const [reportName, setReportName] = useState('')
+  const [config,     setConfig]     = useState<ReportConfig>(EMPTY_CONFIG)
 
-  const [config, setConfig] = useState<ReportConfig>({
-    table: '', columns: [], filters: [], orderBy: undefined, limit: 1000, joins: [], chart: undefined, aggregations: [],
-  })
-
-  const [loadingConn, setLoadingConn] = useState(true)
-  const [loadingTables, setLoadingTables] = useState(false)
-  const [loadingSchema, setLoadingSchema] = useState(false)
-  const [loadingJoinSchema, setLoadingJoinSchema] = useState<string | null>(null)
+  const [loadingConn,    setLoadingConn]    = useState(true)
+  const [loadingTables,  setLoadingTables]  = useState(false)
+  const [loadingSchema,  setLoadingSchema]  = useState(false)
   const [loadingPreview, setLoadingPreview] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
+  const [saving,         setSaving]         = useState(false)
+  const [error,          setError]          = useState('')
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
+  // ── Data loading ──────────────────────────────────────────────────────────
 
   async function loadTablesFor(cid: string) {
     setLoadingTables(true)
     try {
       const r = await connectionsService.getTables(cid)
-      setTables(r.data.data.tables)
+      if (mounted.current) setTables(r.data.data.tables)
     } finally {
-      setLoadingTables(false)
+      if (mounted.current) setLoadingTables(false)
     }
   }
 
@@ -91,28 +99,35 @@ export function ReportBuilder() {
     setLoadingSchema(true)
     try {
       const r = await connectionsService.getTableSchema(cid, table)
-      setSchema(r.data.data.schema)
+      if (mounted.current) setSchema(r.data.data.schema)
     } finally {
-      setLoadingSchema(false)
+      if (mounted.current) setLoadingSchema(false)
     }
   }
 
+  // fetchJoinSchema: no joinSchemas dep — uses functional state update to avoid stale closure
   const fetchJoinSchema = useCallback(async (tableName: string) => {
-    if (!connectionId || joinSchemas.has(tableName)) return
-    setLoadingJoinSchema(tableName)
+    if (!tableName || !connectionId) return
+    setLoadingJoinSchemas((prev) => { const s = new Set(prev); s.add(tableName); return s })
     try {
       const r = await connectionsService.getTableSchema(connectionId, tableName)
-      setJoinSchemas((prev) => new Map(prev).set(tableName, r.data.data.schema))
+      if (mounted.current) {
+        setJoinSchemas((prev) => new Map(prev).set(tableName, r.data.data.schema))
+      }
     } finally {
-      setLoadingJoinSchema(null)
+      if (mounted.current) {
+        setLoadingJoinSchemas((prev) => { const s = new Set(prev); s.delete(tableName); return s })
+      }
     }
-  }, [connectionId, joinSchemas])
+  }, [connectionId])
 
-  // ── Load connections on mount; pre-fill from ?connectionId&table ───────────
+  // ── Load on mount ─────────────────────────────────────────────────────────
+
   useEffect(() => {
     connectionsService.list().then(async (r) => {
+      if (!mounted.current) return
       setConnections(r.data.data.connections)
-      const preConn = searchParams.get('connectionId')
+      const preConn  = searchParams.get('connectionId')
       const preTable = searchParams.get('table')
       if (preConn && !id) {
         setConnectionId(preConn)
@@ -122,25 +137,22 @@ export function ReportBuilder() {
           await loadSchemaFor(preConn, preTable)
         }
       }
-    }).finally(() => setLoadingConn(false))
+    }).finally(() => { if (mounted.current) setLoadingConn(false) })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // ── Load existing report for edit ──────────────────────────────────────────
+  // ── Load existing report for edit ─────────────────────────────────────────
+
   useEffect(() => {
     if (!id) return
     reportsService.get(id).then(async (r) => {
+      if (!mounted.current) return
       const report = r.data.data.report
       setReportName(report.name)
       setConnectionId(report.connection_id)
-      setConfig({ joins: [], aggregations: [], ...report.config })
-
+      setConfig({ ...EMPTY_CONFIG, ...report.config })
       await loadTablesFor(report.connection_id)
-
-      if (report.config.table) {
-        await loadSchemaFor(report.connection_id, report.config.table)
-      }
-      // Restore join schemas
+      if (report.config.table) await loadSchemaFor(report.connection_id, report.config.table)
       const savedJoins = report.config.joins ?? []
       if (savedJoins.length > 0) {
         const entries = await Promise.all(
@@ -149,40 +161,46 @@ export function ReportBuilder() {
             return [j.table, r2.data.data.schema] as [string, TableColumn[]]
           })
         )
-        setJoinSchemas(new Map(entries))
+        if (mounted.current) setJoinSchemas(new Map(entries))
       }
     })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id])
 
-  // ── Connection / table change handlers ────────────────────────────────────
+  // ── Connection / table handlers ───────────────────────────────────────────
 
   async function handleConnectionChange(cid: string) {
     if (cid === connectionId && tables.length > 0) return
     setConnectionId(cid)
-    setConfig({ table: '', columns: [], filters: [], orderBy: undefined, limit: 1000, joins: [], aggregations: [] })
-    setSchema([]); setTables([]); setJoinSchemas(new Map())
+    setConfig(EMPTY_CONFIG)
+    setSchema([]); setTables([]); setJoinSchemas(new Map()); setPreviewRows(null)
     await loadTablesFor(cid)
   }
 
   async function handleTableChange(table: string) {
-    setConfig((c) => ({ ...c, table, columns: [], filters: [], orderBy: undefined, joins: [], aggregations: [] }))
-    setSchema([]); setJoinSchemas(new Map())
+    setConfig((c) => ({ ...c, table, columns: [], filters: [], orderBy: undefined, joins: [], aggregations: [], chart: undefined }))
+    setSchema([]); setJoinSchemas(new Map()); setPreviewRows(null)
     if (table) await loadSchemaFor(connectionId, table)
   }
 
-  // ── JOIN handlers ──────────────────────────────────────────────────────────
+  // ── JOIN handlers ─────────────────────────────────────────────────────────
 
   function addJoin() {
     const newJoin: ReportJoin = { table: '', type: 'LEFT', on: { leftColumn: '', rightColumn: '' } }
-    setConfig((c) => ({ ...c, joins: [...c.joins, newJoin], columns: [], filters: [], orderBy: undefined, aggregations: [] }))
+    // Don't reset columns yet — user hasn't picked a join table
+    setConfig((c) => ({ ...c, joins: [...c.joins, newJoin] }))
   }
 
   function updateJoin(i: number, patch: Partial<ReportJoin>) {
+    const tableChanged = 'table' in patch
     setConfig((c) => {
       const joins = [...c.joins]
       joins[i] = { ...joins[i], ...patch }
-      return { ...c, joins, columns: [], filters: [], orderBy: undefined, aggregations: [] }
+      // Only reset cols/filters when the joined table changes — type/ON changes are harmless
+      if (tableChanged) {
+        return { ...c, joins, columns: [], filters: [], orderBy: undefined, aggregations: [], chart: undefined }
+      }
+      return { ...c, joins }
     })
   }
 
@@ -196,21 +214,29 @@ export function ReportBuilder() {
 
   function removeJoin(i: number) {
     setConfig((c) => {
-      const joins = c.joins.filter((_, idx) => idx !== i)
-      // Drop schema for removed table if no other join uses it
       const removedTable = c.joins[i].table
-      if (removedTable && !joins.some((j) => j.table === removedTable)) {
+      const joins = c.joins.filter((_, idx) => idx !== i)
+      if (removedTable) {
         setJoinSchemas((prev) => { const m = new Map(prev); m.delete(removedTable); return m })
       }
-      return { ...c, joins, columns: [], filters: [], orderBy: undefined, aggregations: [] }
+      // Filter out columns from the removed table; unqualify if no joins left
+      let columns = c.columns
+      if (removedTable) {
+        columns = columns.filter((col) => !col.startsWith(`${removedTable}.`))
+        if (joins.length === 0) {
+          // Strip table-qualifier from remaining cols
+          columns = columns.map((col) => col.includes('.') ? col.split('.')[1] : col)
+        }
+      }
+      return { ...c, joins, columns, aggregations: [], chart: undefined }
     })
   }
 
-  // ── Aggregation helpers ────────────────────────────────────────────────────
+  // ── Aggregation helpers ───────────────────────────────────────────────────
 
   function addAgg() {
-    const defaultCol = allColumns[0]?.id ?? '*'
-    const newAgg: AggregationConfig = { fn: 'COUNT', column: defaultCol === '*' ? '*' : defaultCol, alias: `count_${Date.now()}` }
+    const firstCol = allColumns[0]?.id ?? '*'
+    const newAgg: AggregationConfig = { fn: 'COUNT', column: firstCol, alias: `count_1` }
     setConfig((c) => ({ ...c, aggregations: [...c.aggregations, newAgg] }))
   }
 
@@ -226,23 +252,36 @@ export function ReportBuilder() {
     setConfig((c) => ({ ...c, aggregations: c.aggregations.filter((_, idx) => idx !== i) }))
   }
 
-  // ── Column helpers ─────────────────────────────────────────────────────────
+  // ── Derived data (memoised) ───────────────────────────────────────────────
 
   const hasJoins = config.joins.length > 0 && config.joins.some((j) => j.table)
 
-  const allColumns: ColumnItem[] = hasJoins
-    ? [
-        ...schema.map((c) => ({
-          id: `${config.table}.${c.column}`,
-          label: c.column,
-          type: c.type,
-          group: config.table,
-        })),
-        ...[...joinSchemas.entries()].flatMap(([tbl, cols]) =>
-          cols.map((c) => ({ id: `${tbl}.${c.column}`, label: c.column, type: c.type, group: tbl }))
-        ),
-      ]
-    : schema.map((c) => ({ id: c.column, label: c.column, type: c.type, group: config.table }))
+  const allColumns = useMemo<ColumnItem[]>(() => {
+    if (!hasJoins) return schema.map((c) => ({ id: c.column, label: c.column, type: c.type, group: config.table }))
+    return [
+      ...schema.map((c) => ({ id: `${config.table}.${c.column}`, label: c.column, type: c.type, group: config.table })),
+      ...[...joinSchemas.entries()].flatMap(([tbl, cols]) =>
+        cols.map((c) => ({ id: `${tbl}.${c.column}`, label: c.column, type: c.type, group: tbl }))
+      ),
+    ]
+  }, [hasJoins, schema, config.table, joinSchemas])
+
+  const filterColumnOptions = useMemo(
+    () => hasJoins ? allColumns.map((c) => c.id) : schema.map((c) => c.column),
+    [hasJoins, allColumns, schema]
+  )
+
+  const sortColumns = useMemo(
+    () => [...config.columns, ...config.aggregations.map((a) => a.alias)],
+    [config.columns, config.aggregations]
+  )
+
+  const allAxisCols = useMemo(
+    () => [...config.columns, ...config.aggregations.map((a) => a.alias)],
+    [config.columns, config.aggregations]
+  )
+
+  // ── Filter helpers ────────────────────────────────────────────────────────
 
   function toggleColumn(colId: string) {
     setConfig((c) => ({
@@ -250,12 +289,6 @@ export function ReportBuilder() {
       columns: c.columns.includes(colId) ? c.columns.filter((x) => x !== colId) : [...c.columns, colId],
     }))
   }
-
-  // ── Filter helpers ─────────────────────────────────────────────────────────
-
-  const filterColumnOptions = hasJoins
-    ? allColumns.map((c) => c.id)
-    : schema.map((c) => c.column)
 
   function addFilter() {
     setConfig((c) => ({
@@ -276,22 +309,19 @@ export function ReportBuilder() {
     setConfig((c) => ({ ...c, filters: c.filters.filter((_, idx) => idx !== i) }))
   }
 
-  // ── Sort column options ────────────────────────────────────────────────────
-
-  const sortColumns = [...config.columns, ...config.aggregations.map((a) => a.alias)]
-
   // ── Preview ───────────────────────────────────────────────────────────────
 
   async function loadPreview() {
     setLoadingPreview(true); setPreviewRows(null); setError('')
     try {
       const res = await reportsService.preview(connectionId, { ...config, limit: 50 })
-      setPreviewRows(res.data.data.rows)
+      if (mounted.current) setPreviewRows(res.data.data.rows)
     } catch (err: unknown) {
+      if (!mounted.current) return
       const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
       setError(msg || 'Preview failed. Try adjusting your filters or joins.')
     } finally {
-      setLoadingPreview(false)
+      if (mounted.current) setLoadingPreview(false)
     }
   }
 
@@ -320,7 +350,10 @@ export function ReportBuilder() {
 
   function canNext() {
     if (step === 0) return Boolean(connectionId && config.table)
-    if (step === 1) return true // joins are optional
+    if (step === 1) {
+      // All joins must be complete
+      return config.joins.every((j) => j.table && j.on.leftColumn && j.on.rightColumn)
+    }
     if (step === 2) return config.columns.length > 0 || config.aggregations.length > 0
     return true
   }
@@ -330,7 +363,9 @@ export function ReportBuilder() {
     setStep((s) => Math.min(s + 1, STEPS.length - 1))
   }
 
-  const previewColumns = previewRows && previewRows.length > 0 ? Object.keys(previewRows[0]) : config.columns
+  const previewColumns = previewRows && previewRows.length > 0
+    ? Object.keys(previewRows[0])
+    : [...config.columns, ...config.aggregations.map((a) => a.alias)]
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -340,9 +375,7 @@ export function ReportBuilder() {
         <button onClick={() => navigate('/reports')} className="text-gray-400 hover:text-gray-600">
           <ChevronLeft className="h-5 w-5" />
         </button>
-        <h2 className="text-2xl font-bold text-gray-900">
-          {isEdit ? 'Edit Report' : 'New Report'}
-        </h2>
+        <h2 className="text-2xl font-bold text-gray-900">{isEdit ? 'Edit Report' : 'New Report'}</h2>
       </div>
 
       <StepIndicator current={step} />
@@ -393,92 +426,132 @@ export function ReportBuilder() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
             <div>
-              <CardTitle className="text-base">Add JOINs (Optional)</CardTitle>
+              <CardTitle className="text-base">Add JOINs <span className="text-gray-400 font-normal">(Optional)</span></CardTitle>
               <p className="text-sm text-gray-400 mt-0.5">
-                Join other tables from <span className="font-mono text-gray-600">{config.table}</span> to include their columns.
+                Combine <span className="font-mono text-gray-600 font-medium">{config.table}</span> with other tables.
               </p>
             </div>
             <Button size="sm" onClick={addJoin}>
               <Plus className="h-4 w-4" /> Add JOIN
             </Button>
           </CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent className="space-y-4">
+            {/* JOIN type legend */}
+            <div className="flex flex-wrap gap-3 text-xs text-gray-500 bg-gray-50 rounded-lg px-4 py-3 border border-gray-100">
+              {JOIN_TYPES.map((t) => (
+                <span key={t.value} className="flex items-center gap-1.5">
+                  <span className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-bold ${t.color}`}>{t.value}</span>
+                  {t.desc}
+                </span>
+              ))}
+            </div>
+
             {config.joins.length === 0 ? (
-              <div className="flex flex-col items-center py-8 text-gray-400 gap-2">
-                <Link className="h-8 w-8 opacity-20" />
-                <p className="text-sm">No joins added. Click "Add JOIN" to link another table, or proceed to choose columns.</p>
+              <div className="flex flex-col items-center py-10 text-gray-400 gap-2">
+                <Link className="h-9 w-9 opacity-20" />
+                <p className="text-sm">No joins added. Click "Add JOIN" or go to the next step.</p>
               </div>
             ) : (
-              config.joins.map((join, i) => (
-                <div key={i} className="flex items-center gap-2 flex-wrap p-3 bg-gray-50 rounded-lg border border-gray-100">
-                  {/* Join type */}
-                  <Select value={join.type} onValueChange={(v) => updateJoin(i, { type: v as ReportJoin['type'] })}>
-                    <SelectTrigger className="w-36 h-8 text-xs">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {JOIN_TYPES.map((t) => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
+              config.joins.map((join, i) => {
+                const incomplete = join.table && (!join.on.leftColumn || !join.on.rightColumn)
+                return (
+                  <div
+                    key={i}
+                    className={`rounded-xl border p-4 space-y-3 transition-colors ${
+                      incomplete ? 'border-amber-200 bg-amber-50/50' : 'border-gray-200 bg-gray-50'
+                    }`}
+                  >
+                    {/* Row 1: type toggle + table + delete */}
+                    <div className="flex items-center gap-3 flex-wrap">
+                      {/* JOIN type toggle */}
+                      <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs font-bold">
+                        {JOIN_TYPES.map((t) => (
+                          <button
+                            key={t.value}
+                            type="button"
+                            onClick={() => updateJoin(i, { type: t.value })}
+                            className={`px-3 py-1.5 transition-colors ${
+                              join.type === t.value ? t.color : 'text-gray-400 hover:bg-gray-100'
+                            }`}
+                          >
+                            {t.value}
+                          </button>
+                        ))}
+                      </div>
 
-                  {/* Join table */}
-                  <div className="w-44">
-                    <TablePicker
-                      tables={tables.filter((t) => t !== config.table)}
-                      value={join.table}
-                      onChange={(t) => {
-                        updateJoin(i, { table: t, on: { leftColumn: '', rightColumn: '' } })
-                        fetchJoinSchema(t)
-                      }}
-                      placeholder="Select table..."
-                    />
-                  </div>
+                      {/* Join table */}
+                      <div className="flex-1 min-w-40">
+                        <TablePicker
+                          tables={tables.filter((t) => t !== config.table)}
+                          value={join.table}
+                          onChange={(t) => {
+                            updateJoin(i, { table: t, on: { leftColumn: '', rightColumn: '' } })
+                            if (t) fetchJoinSchema(t)
+                          }}
+                          placeholder="Select table..."
+                        />
+                      </div>
 
-                  {join.table && (
-                    <>
-                      <span className="text-xs text-gray-400 font-medium">ON</span>
+                      <button onClick={() => removeJoin(i)} className="text-gray-400 hover:text-red-500 p-1 rounded">
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
 
-                      {/* Left column (base table) */}
-                      <Select value={join.on.leftColumn} onValueChange={(v) => updateJoinOn(i, { leftColumn: v })}>
-                        <SelectTrigger className="w-44 h-8 text-xs">
-                          <SelectValue placeholder={`${config.table}.column`} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {schema.map((c) => (
-                            <SelectItem key={c.column} value={`${config.table}.${c.column}`}>
-                              <span className="font-mono">{config.table}.{c.column}</span>
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                    {/* Row 2: ON condition */}
+                    {join.table && (
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide w-6 text-center">ON</span>
 
-                      <span className="text-gray-400">=</span>
-
-                      {/* Right column (join table) */}
-                      {loadingJoinSchema === join.table ? (
-                        <Spinner className="h-4 w-4" />
-                      ) : (
-                        <Select value={join.on.rightColumn} onValueChange={(v) => updateJoinOn(i, { rightColumn: v })}>
-                          <SelectTrigger className="w-44 h-8 text-xs">
-                            <SelectValue placeholder={`${join.table}.column`} />
+                        {/* Left column (base table) */}
+                        <Select value={join.on.leftColumn} onValueChange={(v) => updateJoinOn(i, { leftColumn: v })}>
+                          <SelectTrigger className="flex-1 min-w-36 h-8 text-xs">
+                            <SelectValue placeholder={`${config.table}.column`} />
                           </SelectTrigger>
                           <SelectContent>
-                            {(joinSchemas.get(join.table) ?? []).map((c) => (
-                              <SelectItem key={c.column} value={`${join.table}.${c.column}`}>
-                                <span className="font-mono">{join.table}.{c.column}</span>
+                            {schema.map((c) => (
+                              <SelectItem key={c.column} value={`${config.table}.${c.column}`}>
+                                <span className="font-mono">{config.table}.{c.column}</span>
+                                {c.type && <span className="ml-2 text-gray-400 text-[11px]">{c.type}</span>}
                               </SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
-                      )}
-                    </>
-                  )}
 
-                  <button onClick={() => removeJoin(i)} className="text-gray-400 hover:text-red-500 ml-auto">
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </div>
-              ))
+                        <span className="text-gray-400 font-mono text-sm">=</span>
+
+                        {/* Right column (join table) */}
+                        {loadingJoinSchemas.has(join.table) ? (
+                          <div className="flex items-center gap-2 text-sm text-gray-400 flex-1 min-w-36">
+                            <Spinner className="h-4 w-4" /> Loading schema…
+                          </div>
+                        ) : (
+                          <Select value={join.on.rightColumn} onValueChange={(v) => updateJoinOn(i, { rightColumn: v })}>
+                            <SelectTrigger className="flex-1 min-w-36 h-8 text-xs">
+                              <SelectValue placeholder={`${join.table}.column`} />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {(joinSchemas.get(join.table) ?? []).map((c) => (
+                                <SelectItem key={c.column} value={`${join.table}.${c.column}`}>
+                                  <span className="font-mono">{join.table}.{c.column}</span>
+                                  {c.type && <span className="ml-2 text-gray-400 text-[11px]">{c.type}</span>}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Validation hint */}
+                    {incomplete && (
+                      <p className="flex items-center gap-1.5 text-xs text-amber-600">
+                        <AlertCircle className="h-3.5 w-3.5" />
+                        Select both columns to complete the ON condition.
+                      </p>
+                    )}
+                  </div>
+                )
+              })
             )}
           </CardContent>
         </Card>
@@ -506,20 +579,22 @@ export function ReportBuilder() {
                 <Button size="sm" onClick={addAgg}><Plus className="h-4 w-4" /> Add</Button>
               )}
             </div>
-            {/* Tab switcher */}
             <div className="flex border-b border-gray-200 mt-3 -mx-6 px-6">
               {(['columns', 'aggregations'] as const).map((tab) => (
                 <button
                   key={tab}
                   type="button"
                   onClick={() => setAggTab(tab)}
-                  className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors capitalize ${
+                  className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
                     aggTab === tab
                       ? 'border-blue-600 text-blue-600'
                       : 'border-transparent text-gray-500 hover:text-gray-700'
                   }`}
                 >
-                  {tab === 'columns' ? `Columns${config.columns.length > 0 ? ` (${config.columns.length})` : ''}` : `Aggregations${config.aggregations.length > 0 ? ` (${config.aggregations.length})` : ''}`}
+                  {tab === 'columns'
+                    ? `Columns${config.columns.length > 0 ? ` (${config.columns.length})` : ''}`
+                    : `Aggregations${config.aggregations.length > 0 ? ` (${config.aggregations.length})` : ''}`
+                  }
                 </button>
               ))}
             </div>
@@ -539,12 +614,9 @@ export function ReportBuilder() {
                           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                             {cols.map((col) => (
                               <label key={col.id} className="flex items-center gap-3 p-3 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
-                                <input
-                                  type="checkbox"
+                                <input type="checkbox" className="rounded"
                                   checked={config.columns.includes(col.id)}
-                                  onChange={() => toggleColumn(col.id)}
-                                  className="rounded"
-                                />
+                                  onChange={() => toggleColumn(col.id)} />
                                 <div className="min-w-0">
                                   <p className="text-sm font-medium font-mono truncate">{col.label}</p>
                                   <p className="text-xs text-gray-400">{col.type}</p>
@@ -559,12 +631,9 @@ export function ReportBuilder() {
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                       {allColumns.map((col) => (
                         <label key={col.id} className="flex items-center gap-3 p-3 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
-                          <input
-                            type="checkbox"
+                          <input type="checkbox" className="rounded"
                             checked={config.columns.includes(col.id)}
-                            onChange={() => toggleColumn(col.id)}
-                            className="rounded"
-                          />
+                            onChange={() => toggleColumn(col.id)} />
                           <div className="min-w-0">
                             <p className="text-sm font-medium font-mono truncate">{col.label}</p>
                             <p className="text-xs text-gray-400">{col.type}</p>
@@ -586,33 +655,29 @@ export function ReportBuilder() {
             {aggTab === 'aggregations' && (
               <div className="space-y-3">
                 <p className="text-sm text-gray-400">
-                  Aggregate over selected columns. Selected columns become GROUP BY keys; each aggregation produces a computed column.
+                  Selected columns become GROUP BY keys. Each aggregation produces a computed result column.
                 </p>
                 {config.aggregations.length === 0 ? (
-                  <div className="flex flex-col items-center py-8 text-gray-400 gap-2">
-                    <BarChart2 className="h-8 w-8 opacity-20" />
-                    <p className="text-sm">No aggregations. Click "Add" to create one.</p>
+                  <div className="flex flex-col items-center py-10 text-gray-400 gap-2">
+                    <BarChart2 className="h-9 w-9 opacity-20" />
+                    <p className="text-sm">No aggregations yet. Click "Add" to create one.</p>
                   </div>
                 ) : (
                   config.aggregations.map((agg, i) => (
-                    <div key={i} className="flex items-center gap-2 flex-wrap p-3 bg-gray-50 rounded-lg border border-gray-100">
-                      {/* Function */}
+                    <div key={i} className="flex items-center gap-2 flex-wrap p-3 bg-gray-50 rounded-xl border border-gray-200">
                       <Select value={agg.fn} onValueChange={(v) => updateAgg(i, { fn: v as AggregationConfig['fn'] })}>
-                        <SelectTrigger className="w-28 h-8 text-xs font-mono">
+                        <SelectTrigger className="w-24 h-8 text-xs font-mono font-bold">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          {(['COUNT', 'SUM', 'AVG', 'MIN', 'MAX'] as const).map((fn) => (
-                            <SelectItem key={fn} value={fn}>{fn}</SelectItem>
-                          ))}
+                          {AGG_FNS.map((fn) => <SelectItem key={fn} value={fn}>{fn}</SelectItem>)}
                         </SelectContent>
                       </Select>
 
-                      <span className="text-gray-400 text-sm">(</span>
+                      <span className="text-gray-400 text-sm font-mono">(</span>
 
-                      {/* Column */}
                       <Select value={agg.column} onValueChange={(v) => updateAgg(i, { column: v })}>
-                        <SelectTrigger className="w-44 h-8 text-xs">
+                        <SelectTrigger className="w-48 h-8 text-xs">
                           <SelectValue placeholder="Column" />
                         </SelectTrigger>
                         <SelectContent>
@@ -620,22 +685,24 @@ export function ReportBuilder() {
                             <SelectItem value="*"><span className="font-mono">* (all rows)</span></SelectItem>
                           )}
                           {allColumns.map((col) => (
-                            <SelectItem key={col.id} value={col.id}><span className="font-mono">{col.id}</span></SelectItem>
+                            <SelectItem key={col.id} value={col.id}>
+                              <span className="font-mono">{col.id}</span>
+                              <span className="ml-2 text-gray-400 text-[11px]">{col.type}</span>
+                            </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
 
-                      <span className="text-gray-400 text-sm">) AS</span>
+                      <span className="text-gray-400 text-sm font-mono">) AS</span>
 
-                      {/* Alias */}
                       <Input
-                        className="h-8 w-36 text-xs font-mono"
+                        className="h-8 w-32 text-xs font-mono"
                         placeholder="alias"
                         value={agg.alias}
-                        onChange={(e) => updateAgg(i, { alias: e.target.value.replace(/[^a-zA-Z0-9_]/g, '_') })}
+                        onChange={(e) => updateAgg(i, { alias: e.target.value.replace(/[^a-zA-Z0-9_]/g, '_').replace(/^([0-9])/, '_$1') })}
                       />
 
-                      <button onClick={() => removeAgg(i)} className="text-gray-400 hover:text-red-500 ml-auto">
+                      <button onClick={() => removeAgg(i)} className="text-gray-400 hover:text-red-500 p-1 rounded ml-auto">
                         <Trash2 className="h-4 w-4" />
                       </button>
                     </div>
@@ -651,40 +718,38 @@ export function ReportBuilder() {
       {step === 3 && (
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-base">Add Filters (Optional)</CardTitle>
+            <CardTitle className="text-base">Add Filters <span className="text-gray-400 font-normal">(Optional)</span></CardTitle>
             <Button size="sm" onClick={addFilter}><Plus className="h-4 w-4" /> Add Filter</Button>
           </CardHeader>
           <CardContent className="space-y-3">
             {config.filters.length === 0 ? (
-              <p className="text-sm text-gray-400 text-center py-6">No filters. Report will return all rows.</p>
+              <p className="text-sm text-gray-400 text-center py-8">No filters — report will return all rows.</p>
             ) : (
               config.filters.map((f, i) => (
-                <div key={i} className="flex items-center gap-2 flex-wrap">
+                <div key={i} className="flex items-center gap-2 flex-wrap p-3 bg-gray-50 rounded-lg border border-gray-100">
                   <Select value={f.column} onValueChange={(v) => updateFilter(i, { column: v })}>
-                    <SelectTrigger className="w-48">
-                      <SelectValue />
-                    </SelectTrigger>
+                    <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       {filterColumnOptions.map((col) => (
-                        <SelectItem key={col} value={col}>
-                          <span className="font-mono">{col}</span>
-                        </SelectItem>
+                        <SelectItem key={col} value={col}><span className="font-mono">{col}</span></SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                   <Select value={f.operator} onValueChange={(v) => updateFilter(i, { operator: v })}>
                     <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
-                    <SelectContent>{OPERATORS.map((op) => <SelectItem key={op} value={op}>{op}</SelectItem>)}</SelectContent>
+                    <SelectContent>
+                      {OPERATORS.map((op) => <SelectItem key={op} value={op}>{op}</SelectItem>)}
+                    </SelectContent>
                   </Select>
                   {!['IS NULL', 'IS NOT NULL'].includes(f.operator) && (
                     <Input
                       className="w-40"
-                      placeholder="Value"
+                      placeholder={f.operator === 'IN' ? 'a, b, c' : 'Value'}
                       value={f.value as string}
                       onChange={(e) => updateFilter(i, { value: e.target.value })}
                     />
                   )}
-                  <button onClick={() => removeFilter(i)} className="text-gray-400 hover:text-red-500">
+                  <button onClick={() => removeFilter(i)} className="text-gray-400 hover:text-red-500 ml-auto p-1 rounded">
                     <Trash2 className="h-4 w-4" />
                   </button>
                 </div>
@@ -704,12 +769,17 @@ export function ReportBuilder() {
                 <Label>Sort By (Optional)</Label>
                 <Select
                   value={config.orderBy?.column ?? ''}
-                  onValueChange={(v) => setConfig((c) => ({ ...c, orderBy: v ? { column: v, direction: c.orderBy?.direction ?? 'ASC' } : undefined }))}
+                  onValueChange={(v) => setConfig((c) => ({
+                    ...c,
+                    orderBy: v ? { column: v, direction: c.orderBy?.direction ?? 'ASC' } : undefined,
+                  }))}
                 >
                   <SelectTrigger><SelectValue placeholder="No sorting" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="">No sorting</SelectItem>
-                    {sortColumns.map((col) => <SelectItem key={col} value={col}><span className="font-mono">{col}</span></SelectItem>)}
+                    {sortColumns.map((col) => (
+                      <SelectItem key={col} value={col}><span className="font-mono">{col}</span></SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -717,7 +787,10 @@ export function ReportBuilder() {
                 <Label>Direction</Label>
                 <Select
                   value={config.orderBy?.direction ?? 'ASC'}
-                  onValueChange={(v) => setConfig((c) => ({ ...c, orderBy: c.orderBy ? { ...c.orderBy, direction: v as 'ASC' | 'DESC' } : undefined }))}
+                  onValueChange={(v) => setConfig((c) => ({
+                    ...c,
+                    orderBy: c.orderBy ? { ...c.orderBy, direction: v as 'ASC' | 'DESC' } : undefined,
+                  }))}
                   disabled={!config.orderBy}
                 >
                   <SelectTrigger><SelectValue /></SelectTrigger>
@@ -731,8 +804,7 @@ export function ReportBuilder() {
             <div className="space-y-1.5">
               <Label>Row Limit (max 10,000)</Label>
               <Input
-                type="number"
-                min={1} max={10000}
+                type="number" min={1} max={10000}
                 value={config.limit}
                 onChange={(e) => setConfig((c) => ({ ...c, limit: Math.min(10000, parseInt(e.target.value) || 1000) }))}
                 className="w-40"
@@ -745,17 +817,16 @@ export function ReportBuilder() {
       {/* ── Step 5: Configure Chart ───────────────────────────────────── */}
       {step === 5 && (() => {
         const CHART_TYPES: { value: ChartConfig['type']; label: string; icon: React.ReactNode }[] = [
-          { value: 'bar', label: 'Bar', icon: <BarChart2 className="h-4 w-4" /> },
-          { value: 'line', label: 'Line', icon: <LineChart className="h-4 w-4" /> },
-          { value: 'area', label: 'Area', icon: <AreaChart className="h-4 w-4" /> },
-          { value: 'pie', label: 'Pie', icon: <PieChart className="h-4 w-4" /> },
+          { value: 'bar',  label: 'Bar',  icon: <BarChart2 className="h-4 w-4" />    },
+          { value: 'line', label: 'Line', icon: <LineChart className="h-4 w-4" />     },
+          { value: 'area', label: 'Area', icon: <AreaChart className="h-4 w-4" />     },
+          { value: 'pie',  label: 'Pie',  icon: <PieChart className="h-4 w-4" />      },
         ]
         const chart = config.chart
-        const allAxisCols = [...config.columns, ...config.aggregations.map((a) => a.alias)]
         return (
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Configure Chart (Optional)</CardTitle>
+              <CardTitle className="text-base">Configure Chart <span className="text-gray-400 font-normal">(Optional)</span></CardTitle>
               <p className="text-sm text-gray-400 mt-0.5">Add a chart to visualise the report data after running it.</p>
             </CardHeader>
             <CardContent className="space-y-5">
@@ -764,15 +835,12 @@ export function ReportBuilder() {
                   type="checkbox"
                   className="rounded"
                   checked={Boolean(chart)}
-                  onChange={(e) => setConfig((c) => {
-                    const axisCols = [...c.columns, ...c.aggregations.map((a) => a.alias)]
-                    return {
-                      ...c,
-                      chart: e.target.checked
-                        ? { type: 'bar', xAxis: axisCols[0] ?? '', yAxis: axisCols[1] ?? axisCols[0] ?? '' }
-                        : undefined,
-                    }
-                  })}
+                  onChange={(e) => setConfig((c) => ({
+                    ...c,
+                    chart: e.target.checked
+                      ? { type: 'bar', xAxis: allAxisCols[0] ?? '', yAxis: allAxisCols[1] ?? allAxisCols[0] ?? '' }
+                      : undefined,
+                  }))}
                 />
                 <span className="text-sm font-medium text-gray-700">Include a chart in this report</span>
               </label>
@@ -805,7 +873,9 @@ export function ReportBuilder() {
                       <Select value={chart.xAxis} onValueChange={(v) => setConfig((c) => ({ ...c, chart: c.chart ? { ...c.chart, xAxis: v } : undefined }))}>
                         <SelectTrigger><SelectValue placeholder="Select column" /></SelectTrigger>
                         <SelectContent>
-                          {allAxisCols.map((col) => <SelectItem key={col} value={col}><span className="font-mono">{col}</span></SelectItem>)}
+                          {allAxisCols.map((col) => (
+                            <SelectItem key={col} value={col}><span className="font-mono">{col}</span></SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     </div>
@@ -814,16 +884,29 @@ export function ReportBuilder() {
                       <Select value={chart.yAxis} onValueChange={(v) => setConfig((c) => ({ ...c, chart: c.chart ? { ...c.chart, yAxis: v } : undefined }))}>
                         <SelectTrigger><SelectValue placeholder="Select column" /></SelectTrigger>
                         <SelectContent>
-                          {allAxisCols.map((col) => <SelectItem key={col} value={col}><span className="font-mono">{col}</span></SelectItem>)}
+                          {allAxisCols.map((col) => (
+                            <SelectItem key={col} value={col}><span className="font-mono">{col}</span></SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     </div>
                   </div>
 
-                  {chart.xAxis && chart.yAxis && (
-                    <div className="text-xs text-gray-400 bg-gray-50 rounded-lg p-3">
-                      Chart will show <span className="font-mono font-medium text-gray-600">{chart.yAxis}</span> (Y) per <span className="font-mono font-medium text-gray-600">{chart.xAxis}</span> (X) as a <strong>{chart.type}</strong> chart.
+                  {/* Live preview from sampled data */}
+                  {previewRows && previewRows.length > 0 && chart.xAxis && chart.yAxis && (
+                    <div className="border border-gray-200 rounded-xl overflow-hidden">
+                      <p className="text-xs text-gray-400 px-4 pt-3 pb-1">Preview (sample data)</p>
+                      <ReportChart chartConfig={chart} rows={previewRows} />
                     </div>
+                  )}
+
+                  {(!previewRows || previewRows.length === 0) && chart.xAxis && chart.yAxis && (
+                    <p className="text-xs text-gray-400 bg-gray-50 rounded-lg p-3">
+                      Chart will show <span className="font-mono font-medium text-gray-600">{chart.yAxis}</span> (Y)
+                      per <span className="font-mono font-medium text-gray-600">{chart.xAxis}</span> (X)
+                      as a <strong>{chart.type}</strong> chart.
+                      <span className="ml-1 text-gray-300">Run preview in Step 7 to see a sample.</span>
+                    </p>
                   )}
                 </>
               )}
@@ -853,22 +936,28 @@ export function ReportBuilder() {
               <CardTitle className="text-base">
                 Data Preview {previewRows ? `(${previewRows.length} rows)` : ''}
               </CardTitle>
-              <div className="flex gap-2 items-center">
+              <div className="flex gap-2 items-center flex-wrap">
                 {config.columns.length > 0 && (
                   <div className="flex flex-wrap gap-1">
-                    {config.columns.slice(0, 4).map((c) => <Badge key={c} variant="secondary" className="font-mono text-xs">{c}</Badge>)}
-                    {config.columns.length > 4 && <Badge variant="outline">+{config.columns.length - 4}</Badge>}
+                    {config.columns.slice(0, 3).map((c) => (
+                      <Badge key={c} variant="secondary" className="font-mono text-xs">{c}</Badge>
+                    ))}
+                    {config.columns.length > 3 && <Badge variant="outline">+{config.columns.length - 3}</Badge>}
                   </div>
                 )}
                 {config.aggregations.length > 0 && (
-                  <Badge variant="outline"><BarChart2 className="h-3 w-3 mr-1 inline" />{config.aggregations.map((a) => `${a.fn}(${a.column}) AS ${a.alias}`).join(', ')}</Badge>
+                  <Badge variant="outline">
+                    <BarChart2 className="h-3 w-3 mr-1 inline" />
+                    {config.aggregations.length} agg{config.aggregations.length > 1 ? 's' : ''}
+                  </Badge>
                 )}
                 {config.joins.length > 0 && (
-                  <Badge variant="outline"><Link className="h-3 w-3 mr-1 inline" />{config.joins.length} JOIN{config.joins.length > 1 ? 's' : ''}</Badge>
+                  <Badge variant="outline">
+                    <Link className="h-3 w-3 mr-1 inline" />
+                    {config.joins.length} JOIN{config.joins.length > 1 ? 's' : ''}
+                  </Badge>
                 )}
-                {config.chart && (
-                  <Badge variant="success">{config.chart.type} chart</Badge>
-                )}
+                {config.chart && <Badge variant="success">{config.chart.type} chart</Badge>}
                 <Button size="sm" variant="outline" onClick={loadPreview} disabled={loadingPreview}>
                   {loadingPreview ? <Spinner className="h-3.5 w-3.5" /> : 'Refresh'}
                 </Button>
@@ -878,7 +967,7 @@ export function ReportBuilder() {
               {loadingPreview ? (
                 <div className="flex justify-center py-12"><Spinner className="h-6 w-6" /></div>
               ) : previewRows === null ? (
-                <p className="text-center py-8 text-gray-400 text-sm">Loading preview...</p>
+                <p className="text-center py-8 text-gray-400 text-sm">Loading preview…</p>
               ) : previewRows.length === 0 ? (
                 <p className="text-center py-8 text-gray-400 text-sm">No rows matched your filters.</p>
               ) : (
@@ -897,7 +986,9 @@ export function ReportBuilder() {
                       <tr key={i} className="hover:bg-gray-50">
                         {previewColumns.map((col) => (
                           <td key={col} className="px-4 py-2 text-gray-700 whitespace-nowrap max-w-xs truncate">
-                            {row[col] == null ? <span className="text-gray-300 italic">null</span> : String(row[col])}
+                            {row[col] == null
+                              ? <span className="text-gray-300 italic">null</span>
+                              : String(row[col])}
                           </td>
                         ))}
                       </tr>
