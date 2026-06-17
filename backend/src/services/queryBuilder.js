@@ -49,6 +49,12 @@ function buildQuery(k, config) {
       case 'IS NOT NULL':
         query = query.whereNotNull(filter.column);
         break;
+      case 'IN': {
+        const vals = String(filter.value ?? '').split(',').map((v) => v.trim()).filter(Boolean);
+        if (vals.length === 0) break;
+        query = query.whereIn(filter.column, vals);
+        break;
+      }
       case 'LIKE':
       case 'NOT LIKE':
         query = query.where(filter.column, filter.operator, `%${filter.value}%`);

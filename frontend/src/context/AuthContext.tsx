@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react'
 import { authService, type User } from '@/services/auth'
+import { cache } from '@/lib/cache'
 
 interface AuthContextValue {
   user: User | null
@@ -34,6 +35,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(async () => {
     await authService.logout()
+    cache.clear()
     setUser(null)
   }, [])
 

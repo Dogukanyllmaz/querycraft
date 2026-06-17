@@ -22,6 +22,10 @@ class MemCache {
       if (key.startsWith(prefix)) this.store.delete(key)
     }
   }
+
+  clear() {
+    this.store.clear()
+  }
 }
 
 export const cache = new MemCache()

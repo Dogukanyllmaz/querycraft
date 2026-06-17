@@ -27,6 +27,7 @@ export function Dashboard() {
         setConnections(cRes.data.data.connections.slice(0, 5))
         setReports(rRes.data.data.reports.slice(0, 5))
       })
+      .catch(() => { /* silently ignore — empty states shown */ })
       .finally(() => setLoading(false))
   }, [])
 

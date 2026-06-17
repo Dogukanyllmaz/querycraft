@@ -67,6 +67,14 @@ function initDb() {
     );
   `);
 
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_connections_user_id ON connections(user_id);
+    CREATE INDEX IF NOT EXISTS idx_reports_user_id ON reports(user_id);
+    CREATE INDEX IF NOT EXISTS idx_reports_connection_id ON reports(connection_id);
+    CREATE INDEX IF NOT EXISTS idx_report_runs_report_id ON report_runs(report_id);
+    CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+  `);
+
   logger.info('Database initialized at', DB_PATH);
   return database;
 }
