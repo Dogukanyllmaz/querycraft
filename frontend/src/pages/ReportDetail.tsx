@@ -98,6 +98,36 @@ export function ReportDetail() {
     }))
   }, [rows, report?.config?.chart?.xAxis, report?.config?.chart?.yAxis])
 
+  // Client-side filtering — must stay BEFORE early returns to satisfy Rules of Hooks
+  const filteredRows = useMemo(() => {
+    if (!rows) return null
+    let result = rows
+    if (tableSearch.trim()) {
+      const q = tableSearch.toLowerCase()
+      result = result.filter((r) => Object.values(r).some((v) => safeString(v).toLowerCase().includes(q)))
+    }
+    for (const f of colFilters) {
+      if (!f.col || !f.val) continue
+      result = result.filter((r) => {
+        const cell = safeString(r[f.col])
+        const cellLo = cell.toLowerCase()
+        const valLo  = f.val.toLowerCase()
+        switch (f.op) {
+          case 'contains':     return cellLo.includes(valLo)
+          case 'not contains': return !cellLo.includes(valLo)
+          case '=':            return cell === f.val
+          case '!=':           return cell !== f.val
+          case '>':            return parseFloat(cell) > parseFloat(f.val)
+          case '>=':           return parseFloat(cell) >= parseFloat(f.val)
+          case '<':            return parseFloat(cell) < parseFloat(f.val)
+          case '<=':           return parseFloat(cell) <= parseFloat(f.val)
+          default:             return true
+        }
+      })
+    }
+    return result
+  }, [rows, tableSearch, colFilters])
+
   async function handleRun() {
     if (!id) return
     setRunning(true); setError(''); setRows(null); setPage(1); setShowAvg(false)
@@ -138,36 +168,6 @@ export function ReportDetail() {
   const columns = (rows && rows.length > 0) ? Object.keys(rows[0]) : (config.columns ?? [])
   const lastRunLabel = safeDistance(report.last_run)
   const hasChart = Boolean(config.chart)
-
-  // Client-side filtering on already-fetched rows
-  const filteredRows = useMemo(() => {
-    if (!rows) return null
-    let result = rows
-    if (tableSearch.trim()) {
-      const q = tableSearch.toLowerCase()
-      result = result.filter((r) => Object.values(r).some((v) => safeString(v).toLowerCase().includes(q)))
-    }
-    for (const f of colFilters) {
-      if (!f.col || !f.val) continue
-      result = result.filter((r) => {
-        const cell = safeString(r[f.col])
-        const cellLo = cell.toLowerCase()
-        const valLo  = f.val.toLowerCase()
-        switch (f.op) {
-          case 'contains':     return cellLo.includes(valLo)
-          case 'not contains': return !cellLo.includes(valLo)
-          case '=':            return cell === f.val
-          case '!=':           return cell !== f.val
-          case '>':            return parseFloat(cell) > parseFloat(f.val)
-          case '>=':           return parseFloat(cell) >= parseFloat(f.val)
-          case '<':            return parseFloat(cell) < parseFloat(f.val)
-          case '<=':           return parseFloat(cell) <= parseFloat(f.val)
-          default:             return true
-        }
-      })
-    }
-    return result
-  }, [rows, tableSearch, colFilters])
 
   const activeFilters = tableSearch.trim() !== '' || colFilters.some((f) => f.col && f.val)
 
@@ -285,23 +285,21 @@ export function ReportDetail() {
               </div>
 
               <div className="flex items-center gap-2">
-                {/* Table filter toggle */}
-                {view === 'table' && (
-                  <button
-                    onClick={() => setShowFilters((v) => !v)}
-                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium border transition-all duration-150 ${
-                      showFilters || activeFilters
-                        ? 'bg-blue-600 text-white border-blue-600'
-                        : 'border-slate-200 text-slate-500 hover:border-slate-300 hover:text-slate-700'
-                    }`}
-                  >
-                    <Filter className="h-3 w-3" />
-                    Filter
-                    {colFilters.filter((f) => f.col && f.val).length > 0 && (
-                      <span className="ml-0.5 bg-white/30 rounded px-1">{colFilters.filter((f) => f.col && f.val).length}</span>
-                    )}
-                  </button>
-                )}
+                {/* Filter toggle — available in both table and chart views */}
+                <button
+                  onClick={() => setShowFilters((v) => !v)}
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium border transition-all duration-150 ${
+                    showFilters || activeFilters
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'border-slate-200 text-slate-500 hover:border-slate-300 hover:text-slate-700'
+                  }`}
+                >
+                  <Filter className="h-3 w-3" />
+                  Filter
+                  {colFilters.filter((f) => f.col && f.val).length > 0 && (
+                    <span className="ml-0.5 bg-white/30 rounded px-1">{colFilters.filter((f) => f.col && f.val).length}</span>
+                  )}
+                </button>
                 {/* Avg reference line toggle — bar/line/area only */}
                 {view === 'chart' && hasChart && config.chart?.type !== 'pie' && config.chart?.type !== 'stacked-bar' && (
                   <button
@@ -345,8 +343,8 @@ export function ReportDetail() {
             </div>
           </CardHeader>
 
-          {/* Filter panel — shown when toggled and in table view */}
-          {view === 'table' && showFilters && (
+          {/* Filter panel — shown when toggled (table and chart views) */}
+          {showFilters && (
             <div className="border-b border-slate-100 px-4 py-3 space-y-2 bg-slate-50/60">
               {/* Global search */}
               <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-3 py-1.5">
@@ -421,7 +419,7 @@ export function ReportDetail() {
             {view === 'chart' && config.chart ? (
               <ReportChart
                 chartConfig={config.chart}
-                rows={rows}
+                rows={filteredRows ?? rows}
                 showAvg={showAvg}
                 onTrendStat={setTrendStat}
               />

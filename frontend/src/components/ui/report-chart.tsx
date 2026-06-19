@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   BarChart, Bar,
   LineChart, Line,
@@ -6,7 +6,7 @@ import {
   PieChart, Pie,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine,
 } from 'recharts'
-import { TrendingUp, TrendingDown } from 'lucide-react'
+import { TrendingUp, TrendingDown, Search } from 'lucide-react'
 import type { ChartConfig } from '@/services/reports'
 
 // Professional enterprise data-viz palette — WCAG AA contrast, hue-varied, colorblind-safe
@@ -199,6 +199,24 @@ export function ReportChart({ chartConfig, rows, showAvg = false, onTrendStat }:
     return [sorted, totalCats]
   }, [rows, xAxis, type, chartConfig.series])
 
+  // Interactive series filter — stacked-bar only (must be before early returns)
+  const [activeSeries, setActiveSeries] = useState<Set<string>>(
+    () => new Set(chartConfig.series ?? [])
+  )
+  const seriesKey = (chartConfig.series ?? []).join('\x00')
+  useEffect(() => {
+    setActiveSeries(new Set(chartConfig.series ?? []))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seriesKey])
+
+  // Customer (X-axis) filter — stacked-bar only (must be before early returns)
+  const [hiddenCustomers, setHiddenCustomers] = useState<Set<string>>(new Set())
+  const [customerSearch,  setCustomerSearch]  = useState('')
+  useEffect(() => {
+    setHiddenCustomers(new Set())
+    setCustomerSearch('')
+  }, [stackedData])
+
   if (!rows.length) return <EmptyChart />
 
   // Shared avg reference line (bar / line / area only)
@@ -220,54 +238,195 @@ export function ReportChart({ chartConfig, rows, showAvg = false, onTrendStat }:
 
   // ── Stacked Bar ──────────────────────────────────────────────────────────────
   if (type === 'stacked-bar') {
-    const series = chartConfig.series ?? []
-    if (!series.length) return <EmptyChart message="No series columns configured." />
+    const allSeries = chartConfig.series ?? []
+    if (!allSeries.length) return <EmptyChart message="No series columns configured." />
 
-    const n      = stackedData.length
-    const angle  = n > 12 ? -40 : n > 6 ? -25 : 0
-    const bottom = angle < -30 ? 76 : angle < -10 ? 58 : 36
-    const animate = n <= ANIMATE_LIMIT
+    // Apply customer (X-axis) filter on top of stackedData
+    const filteredStackedData = hiddenCustomers.size > 0
+      ? stackedData.filter((d) => !hiddenCustomers.has(String(d[xAxis])))
+      : stackedData
+
+    const visibleSeries  = allSeries.filter((s) => activeSeries.has(s))
+    const allSeriesActive = activeSeries.size === allSeries.length
+    const n              = filteredStackedData.length
+    const angle          = n > 14 ? -45 : n > 8 ? -30 : 0
+    const bottom         = angle < -30 ? 80 : angle < -10 ? 60 : 40
+
+    const toggleSeries = (s: string) => {
+      setActiveSeries((prev) => {
+        if (prev.has(s)) {
+          if (prev.size === 1) return new Set(allSeries)
+          const next = new Set(prev); next.delete(s); return next
+        }
+        return new Set([...prev, s])
+      })
+    }
+
+    const toggleCustomer = (key: string) => {
+      setHiddenCustomers((prev) => {
+        const next = new Set(prev)
+        if (next.has(key)) next.delete(key); else next.add(key)
+        return next
+      })
+    }
+
+    // Customers visible in panel = all top-N entries, filtered by search
+    const searchLo       = customerSearch.toLowerCase()
+    const panelCustomers = stackedData.filter((d) =>
+      !searchLo || String(d[xAxis]).toLowerCase().includes(searchLo)
+    )
+    const visibleCount   = stackedData.length - hiddenCustomers.size
+    const allCusActive   = hiddenCustomers.size === 0
 
     return (
       <div className="animate-fade-in">
-        <DataNote totalRows={rows.length} totalCategories={stackedTotal} shown={n} />
-        <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
-          <BarChart data={stackedData} margin={{ top: 10, right: 16, left: 0, bottom }}>
-            <CartesianGrid {...GRID_STYLE} vertical={false} />
-            <XAxis
-              dataKey={xAxis}
-              tick={TICK_STYLE}
-              angle={angle}
-              textAnchor={angle !== 0 ? 'end' : 'middle'}
-              interval={0}
-              tickLine={false}
-              axisLine={{ stroke: '#e2e8f0' }}
-              tickFormatter={(v: unknown) => {
-                const s = String(v)
-                return s.length > 16 ? `${s.slice(0, 14)}…` : s
-              }}
-            />
-            <YAxis tick={TICK_STYLE} width={64} tickFormatter={fmt} tickLine={false} axisLine={false} />
-            <Tooltip
-              contentStyle={TOOLTIP_STYLE}
-              formatter={(v: unknown, name: string) => [fmt(v), name]}
-              cursor={{ fill: 'rgba(59,130,246,0.04)' }}
-            />
-            <Legend wrapperStyle={LEGEND_STYLE} />
-            {series.map((s, i) => (
-              <Bar
-                key={s}
-                dataKey={s}
-                stackId="a"
-                fill={STACK_COLORS[i % STACK_COLORS.length]}
-                name={s}
-                maxBarSize={80}
-                isAnimationActive={animate}
-                radius={i === series.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]}
-              />
-            ))}
-          </BarChart>
-        </ResponsiveContainer>
+        <DataNote totalRows={rows.length} totalCategories={stackedTotal} shown={stackedData.length} grouped />
+        <div className="flex gap-5">
+          {/* ── Chart ──────────────────────────────────────────────────────── */}
+          <div className="flex-1 min-w-0">
+            <ResponsiveContainer width="100%" height={CHART_HEIGHT + 20}>
+              <BarChart data={filteredStackedData} margin={{ top: 10, right: 8, left: 0, bottom }}>
+                <CartesianGrid {...GRID_STYLE} vertical={false} />
+                <XAxis
+                  dataKey={xAxis}
+                  tick={{ ...TICK_STYLE, fontSize: 10 }}
+                  angle={angle}
+                  textAnchor={angle !== 0 ? 'end' : 'middle'}
+                  interval={0}
+                  tickLine={false}
+                  axisLine={{ stroke: '#e2e8f0' }}
+                  tickFormatter={(v: unknown) => {
+                    const s = String(v)
+                    return s.length > 14 ? `${s.slice(0, 12)}…` : s
+                  }}
+                />
+                <YAxis tick={TICK_STYLE} width={60} tickFormatter={fmt} tickLine={false} axisLine={false} />
+                <Tooltip
+                  contentStyle={TOOLTIP_STYLE}
+                  formatter={(v: unknown, name: string) => [fmt(v), name]}
+                  cursor={{ fill: 'rgba(59,130,246,0.04)' }}
+                />
+                {visibleSeries.map((s) => {
+                  const idx = allSeries.indexOf(s)
+                  return (
+                    <Bar
+                      key={s}
+                      dataKey={s}
+                      stackId="a"
+                      fill={STACK_COLORS[idx % STACK_COLORS.length]}
+                      name={s}
+                      maxBarSize={52}
+                      isAnimationActive={false}
+                      radius={s === visibleSeries[visibleSeries.length - 1] ? [4, 4, 0, 0] : [0, 0, 0, 0]}
+                    />
+                  )
+                })}
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* ── Right panel: Seriler + Cariler ─────────────────────────────── */}
+          <div className="w-52 shrink-0 flex flex-col gap-4 pt-2">
+
+            {/* Seriler bölümü */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5 px-1">
+                <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Seriler</span>
+                {!allSeriesActive && (
+                  <button onClick={() => setActiveSeries(new Set(allSeries))}
+                    className="text-[10px] text-blue-500 hover:text-blue-700 font-medium">
+                    Tümü
+                  </button>
+                )}
+              </div>
+              <div className="flex flex-col gap-0.5">
+                {allSeries.map((s, i) => {
+                  const active = activeSeries.has(s)
+                  const color  = STACK_COLORS[i % STACK_COLORS.length]
+                  return (
+                    <button key={s} onClick={() => toggleSeries(s)}
+                      className={`group flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left transition-all text-xs ${
+                        active
+                          ? 'bg-white border border-slate-200 text-slate-700 shadow-sm'
+                          : 'text-slate-400 hover:bg-slate-50 hover:text-slate-500 border border-transparent'
+                      }`}
+                    >
+                      <span className="h-2.5 w-2.5 rounded-sm shrink-0 transition-colors"
+                        style={{ background: active ? color : '#d1d5db' }} />
+                      <span className="flex-1 truncate" title={s}>{s}</span>
+                      {active && activeSeries.size > 1 && (
+                        <span className="opacity-0 group-hover:opacity-50 text-[10px] text-slate-500 shrink-0">✕</span>
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* Divider */}
+            <div className="border-t border-slate-100" />
+
+            {/* Cariler bölümü */}
+            <div className="flex flex-col min-h-0 flex-1">
+              <div className="flex items-center justify-between mb-1.5 px-1">
+                <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                  Cariler
+                  <span className="ml-1 font-normal normal-case text-slate-300">
+                    {allCusActive ? stackedData.length : `${visibleCount}/${stackedData.length}`}
+                  </span>
+                </span>
+                {!allCusActive && (
+                  <button onClick={() => setHiddenCustomers(new Set())}
+                    className="text-[10px] text-blue-500 hover:text-blue-700 font-medium">
+                    Tümü
+                  </button>
+                )}
+              </div>
+
+              {/* Arama */}
+              <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg border border-slate-200 bg-white mb-1.5">
+                <Search className="h-3 w-3 text-slate-400 shrink-0" />
+                <input
+                  value={customerSearch}
+                  onChange={(e) => setCustomerSearch(e.target.value)}
+                  placeholder="Cari ara..."
+                  className="flex-1 text-xs outline-none bg-transparent text-slate-700 placeholder:text-slate-400 min-w-0"
+                />
+                {customerSearch && (
+                  <button onClick={() => setCustomerSearch('')} className="text-slate-300 hover:text-slate-500 shrink-0">
+                    <span className="text-[10px]">✕</span>
+                  </button>
+                )}
+              </div>
+
+              {/* Liste */}
+              <div className="overflow-y-auto flex flex-col gap-0.5" style={{ maxHeight: 220 }}>
+                {panelCustomers.length === 0 && (
+                  <p className="text-xs text-slate-400 px-2 py-2">Sonuç yok</p>
+                )}
+                {panelCustomers.map((d) => {
+                  const key     = String(d[xAxis])
+                  const visible = !hiddenCustomers.has(key)
+                  return (
+                    <button key={key} onClick={() => toggleCustomer(key)}
+                      className={`group flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left transition-all text-xs ${
+                        visible
+                          ? 'bg-white border border-slate-200 text-slate-700'
+                          : 'text-slate-400 hover:bg-slate-50 hover:text-slate-500 border border-transparent'
+                      }`}
+                    >
+                      <span className={`h-2 w-2 rounded-sm shrink-0 border transition-colors ${
+                        visible ? 'bg-blue-500 border-blue-500' : 'border-slate-300 bg-white'
+                      }`} />
+                      <span className="flex-1 truncate font-mono text-[11px]" title={key}>{key}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+          </div>{/* end right panel */}
+        </div>
       </div>
     )
   }
@@ -532,20 +691,22 @@ function DataNote({
   totalRows,
   totalCategories,
   shown,
+  grouped = false,
 }: {
   totalRows: number
   totalCategories: number
   shown: number
+  grouped?: boolean  // stacked-bar: group-by (not sampling)
 }) {
-  const aggregated = totalCategories < totalRows
+  const aggregated = grouped || totalCategories < totalRows
   const truncated  = shown < totalCategories
   if (!aggregated && !truncated) return null
 
   let text: string
   if (truncated && aggregated) {
-    text = `Top ${shown.toLocaleString()} of ${totalCategories.toLocaleString()} categories · summed from ${totalRows.toLocaleString()} rows`
+    text = `Top ${shown.toLocaleString()} of ${totalCategories.toLocaleString()} categories · grouped from ${totalRows.toLocaleString()} rows`
   } else if (aggregated) {
-    text = `${shown.toLocaleString()} ${shown === 1 ? 'category' : 'categories'} · summed from ${totalRows.toLocaleString()} rows`
+    text = `${shown.toLocaleString()} ${shown === 1 ? 'category' : 'categories'} · grouped from ${totalRows.toLocaleString()} rows`
   } else {
     text = `Showing ${shown.toLocaleString()} of ${totalCategories.toLocaleString()} data points · sampled for performance`
   }
