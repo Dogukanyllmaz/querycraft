@@ -1012,8 +1012,10 @@ export function ReportBuilder() {
                           onClick={() => setConfig((c) => {
                             if (!c.chart) return c
                             if (t.value === 'stacked-bar') {
-                              const numericCols = axisColsMeta.filter((col) => isNumeric(col.type)).map((col) => col.id)
-                              return { ...c, chart: { ...c.chart, type: 'stacked-bar', yAxis: '', series: numericCols } }
+                              const defaultSeries = axisColsMeta
+                                .filter((col) => col.id !== (c.chart?.xAxis ?? ''))
+                                .map((col) => col.id)
+                              return { ...c, chart: { ...c.chart, type: 'stacked-bar', yAxis: '', series: defaultSeries } }
                             }
                             return { ...c, chart: { ...c.chart, type: t.value, series: undefined } }
                           })}
@@ -1051,10 +1053,10 @@ export function ReportBuilder() {
                       <div className="space-y-2">
                         <div className="flex items-center gap-2">
                           <Label className="text-sm font-semibold">Series Columns</Label>
-                          <span className="text-xs text-gray-400">numeric · stacked</span>
+                          <span className="text-xs text-gray-400">stacked</span>
                         </div>
                         <div className="grid grid-cols-1 gap-1.5 max-h-52 overflow-y-auto pr-1">
-                          {axisColsMeta.filter((col) => isNumeric(col.type)).map((col) => (
+                          {axisColsMeta.filter((col) => col.id !== chart.xAxis).map((col) => (
                             <label key={col.id} className="flex items-center gap-2.5 px-3 py-2 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors text-sm">
                               <input
                                 type="checkbox"
@@ -1070,12 +1072,10 @@ export function ReportBuilder() {
                                   })
                                 }}
                               />
-                              <span className="font-mono text-xs truncate">{col.label}</span>
+                              <span className="font-mono text-xs truncate flex-1">{col.label}</span>
+                              <span className="text-[10px] text-gray-400 shrink-0">{col.type || 'text'}</span>
                             </label>
                           ))}
-                          {axisColsMeta.filter((col) => isNumeric(col.type)).length === 0 && (
-                            <p className="text-xs text-gray-400 py-2">No numeric columns available.</p>
-                          )}
                         </div>
                         {(chart.series?.length ?? 0) < 2 && (
                           <p className="text-xs text-amber-600">Select at least 2 columns to stack.</p>
