@@ -13,6 +13,7 @@ import { AiInsights } from '@/components/ui/ai-insights'
 import {
   Play, Download, ArrowLeft, Edit, BarChart2,
   Table, ChevronLeft, ChevronRight, Link as LinkIcon, Users, Minus,
+  Search, Filter, X, Plus,
 } from 'lucide-react'
 
 const PAGE_SIZE = 100
@@ -53,8 +54,11 @@ export function ReportDetail() {
   const [view, setView] = useState<'table' | 'chart'>('table')
   const [page, setPage] = useState(1)
   const [permissionsOpen, setPermissionsOpen] = useState(false)
-  const [showAvg,   setShowAvg]   = useState(false)
-  const [trendStat, setTrendStat] = useState<TrendStat | null>(null)
+  const [showAvg,     setShowAvg]     = useState(false)
+  const [trendStat,   setTrendStat]   = useState<TrendStat | null>(null)
+  const [tableSearch, setTableSearch] = useState('')
+  const [colFilters,  setColFilters]  = useState<{ col: string; op: string; val: string }[]>([])
+  const [showFilters, setShowFilters] = useState(false)
 
   useEffect(() => {
     mounted.current = true
@@ -97,6 +101,7 @@ export function ReportDetail() {
   async function handleRun() {
     if (!id) return
     setRunning(true); setError(''); setRows(null); setPage(1); setShowAvg(false)
+    setTableSearch(''); setColFilters([])
     try {
       const res = await reportsService.execute(id)
       if (!mounted.current) return
@@ -134,8 +139,40 @@ export function ReportDetail() {
   const lastRunLabel = safeDistance(report.last_run)
   const hasChart = Boolean(config.chart)
 
-  const totalPages = rows ? Math.ceil(rows.length / PAGE_SIZE) : 1
-  const pageRows   = rows ? rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE) : []
+  // Client-side filtering on already-fetched rows
+  const filteredRows = useMemo(() => {
+    if (!rows) return null
+    let result = rows
+    if (tableSearch.trim()) {
+      const q = tableSearch.toLowerCase()
+      result = result.filter((r) => Object.values(r).some((v) => safeString(v).toLowerCase().includes(q)))
+    }
+    for (const f of colFilters) {
+      if (!f.col || !f.val) continue
+      result = result.filter((r) => {
+        const cell = safeString(r[f.col])
+        const cellLo = cell.toLowerCase()
+        const valLo  = f.val.toLowerCase()
+        switch (f.op) {
+          case 'contains':     return cellLo.includes(valLo)
+          case 'not contains': return !cellLo.includes(valLo)
+          case '=':            return cell === f.val
+          case '!=':           return cell !== f.val
+          case '>':            return parseFloat(cell) > parseFloat(f.val)
+          case '>=':           return parseFloat(cell) >= parseFloat(f.val)
+          case '<':            return parseFloat(cell) < parseFloat(f.val)
+          case '<=':           return parseFloat(cell) <= parseFloat(f.val)
+          default:             return true
+        }
+      })
+    }
+    return result
+  }, [rows, tableSearch, colFilters])
+
+  const activeFilters = tableSearch.trim() !== '' || colFilters.some((f) => f.col && f.val)
+
+  const totalPages = filteredRows ? Math.ceil(filteredRows.length / PAGE_SIZE) : 1
+  const pageRows   = filteredRows ? filteredRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE) : []
 
   return (
     <div className="space-y-5 animate-fade-in">
@@ -234,7 +271,10 @@ export function ReportDetail() {
             <div className="flex items-center justify-between pb-4">
               <div className="flex items-center gap-2">
                 <CardTitle className="text-sm font-semibold text-slate-700">
-                  {rows.length.toLocaleString()} rows
+                  {activeFilters
+                    ? <>{(filteredRows?.length ?? 0).toLocaleString()} <span className="font-normal text-slate-400">of {rows.length.toLocaleString()} rows</span></>
+                    : <>{rows.length.toLocaleString()} rows</>
+                  }
                   {totalPages > 1 && (
                     <span className="ml-2 text-xs font-normal text-slate-400">
                       page {page}/{totalPages}
@@ -245,6 +285,23 @@ export function ReportDetail() {
               </div>
 
               <div className="flex items-center gap-2">
+                {/* Table filter toggle */}
+                {view === 'table' && (
+                  <button
+                    onClick={() => setShowFilters((v) => !v)}
+                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium border transition-all duration-150 ${
+                      showFilters || activeFilters
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'border-slate-200 text-slate-500 hover:border-slate-300 hover:text-slate-700'
+                    }`}
+                  >
+                    <Filter className="h-3 w-3" />
+                    Filter
+                    {colFilters.filter((f) => f.col && f.val).length > 0 && (
+                      <span className="ml-0.5 bg-white/30 rounded px-1">{colFilters.filter((f) => f.col && f.val).length}</span>
+                    )}
+                  </button>
+                )}
                 {/* Avg reference line toggle — bar/line/area only */}
                 {view === 'chart' && hasChart && config.chart?.type !== 'pie' && config.chart?.type !== 'stacked-bar' && (
                   <button
@@ -287,6 +344,78 @@ export function ReportDetail() {
               </div>
             </div>
           </CardHeader>
+
+          {/* Filter panel — shown when toggled and in table view */}
+          {view === 'table' && showFilters && (
+            <div className="border-b border-slate-100 px-4 py-3 space-y-2 bg-slate-50/60">
+              {/* Global search */}
+              <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-3 py-1.5">
+                <Search className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                <input
+                  type="text"
+                  value={tableSearch}
+                  onChange={(e) => { setTableSearch(e.target.value); setPage(1) }}
+                  placeholder="Search across all columns..."
+                  className="flex-1 text-sm outline-none bg-transparent text-slate-700 placeholder:text-slate-400"
+                />
+                {tableSearch && (
+                  <button onClick={() => { setTableSearch(''); setPage(1) }} className="text-slate-400 hover:text-slate-600">
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+
+              {/* Column filters */}
+              {colFilters.map((f, i) => (
+                <div key={i} className="flex items-center gap-2 flex-wrap">
+                  <select
+                    value={f.col}
+                    onChange={(e) => { const a = [...colFilters]; a[i] = { ...a[i], col: e.target.value }; setColFilters(a); setPage(1) }}
+                    className="h-8 text-xs border border-slate-200 rounded-lg px-2 bg-white text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">Column...</option>
+                    {columns.map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                  <select
+                    value={f.op}
+                    onChange={(e) => { const a = [...colFilters]; a[i] = { ...a[i], op: e.target.value }; setColFilters(a); setPage(1) }}
+                    className="h-8 text-xs border border-slate-200 rounded-lg px-2 bg-white text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    {['contains', 'not contains', '=', '!=', '>', '>=', '<', '<='].map((op) => (
+                      <option key={op} value={op}>{op}</option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    value={f.val}
+                    onChange={(e) => { const a = [...colFilters]; a[i] = { ...a[i], val: e.target.value }; setColFilters(a); setPage(1) }}
+                    placeholder="Value..."
+                    className="h-8 text-xs border border-slate-200 rounded-lg px-2.5 bg-white text-slate-700 outline-none focus:ring-2 focus:ring-blue-500 w-40"
+                  />
+                  <button onClick={() => { setColFilters((prev) => prev.filter((_, idx) => idx !== i)); setPage(1) }} className="text-slate-400 hover:text-red-500">
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
+
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setColFilters((prev) => [...prev, { col: columns[0] ?? '', op: 'contains', val: '' }])}
+                  className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700 font-medium"
+                >
+                  <Plus className="h-3.5 w-3.5" /> Add condition
+                </button>
+                {activeFilters && (
+                  <button
+                    onClick={() => { setTableSearch(''); setColFilters([]); setPage(1) }}
+                    className="text-xs text-slate-400 hover:text-slate-600"
+                  >
+                    Clear all
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
 
           <CardContent className={view === 'chart' ? 'pt-5 pb-5 px-5' : 'p-0 overflow-x-auto'}>
             {view === 'chart' && config.chart ? (
@@ -342,7 +471,7 @@ export function ReportDetail() {
                   <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 bg-slate-50/60">
                     <p className="text-xs text-slate-500 tabular-nums">
                       {((page - 1) * PAGE_SIZE + 1).toLocaleString()}–
-                      {Math.min(page * PAGE_SIZE, rows.length).toLocaleString()} of {rows.length.toLocaleString()}
+                      {Math.min(page * PAGE_SIZE, filteredRows?.length ?? 0).toLocaleString()} of {(filteredRows?.length ?? 0).toLocaleString()}
                     </p>
                     <div className="flex items-center gap-1">
                       <button

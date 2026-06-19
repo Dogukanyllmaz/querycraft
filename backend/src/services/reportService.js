@@ -7,6 +7,65 @@ const { getConnectionWithCredentials, buildKnexConfig } = require('./connectionM
 const { buildQuery } = require('./queryBuilder');
 const { hasAccess } = require('./reportPermissionsService');
 
+// ── Cross-connection JOIN helpers ─────────────────────────────────────────────
+
+async function fetchForeignTable(conn, tableName) {
+  const k = knex(buildKnexConfig(conn));
+  try {
+    return await k(tableName).select('*').limit(50_000);
+  } finally {
+    await k.destroy();
+  }
+}
+
+function colName(qualified) {
+  return qualified.includes('.') ? qualified.split('.').pop() : qualified;
+}
+
+function performHashJoin(leftRows, rightRows, join) {
+  const { type, on } = join;
+  const leftCol  = colName(on.leftColumn);
+  const rightCol = colName(on.rightColumn);
+
+  if (type === 'RIGHT') {
+    const leftMap = new Map();
+    for (const l of leftRows) {
+      const key = String(l[leftCol] ?? '');
+      if (!leftMap.has(key)) leftMap.set(key, []);
+      leftMap.get(key).push(l);
+    }
+    const result = [];
+    for (const right of rightRows) {
+      const key = String(right[rightCol] ?? '');
+      const matches = leftMap.get(key) ?? [];
+      if (matches.length > 0) {
+        for (const left of matches) result.push({ ...left, ...right });
+      } else {
+        result.push({ ...right });
+      }
+    }
+    return result;
+  }
+
+  const rightMap = new Map();
+  for (const r of rightRows) {
+    const key = String(r[rightCol] ?? '');
+    if (!rightMap.has(key)) rightMap.set(key, []);
+    rightMap.get(key).push(r);
+  }
+  const result = [];
+  for (const left of leftRows) {
+    const key = String(left[leftCol] ?? '');
+    const matches = rightMap.get(key) ?? [];
+    if (matches.length > 0) {
+      for (const right of matches) result.push({ ...left, ...right });
+    } else if (type === 'LEFT') {
+      result.push({ ...left });
+    }
+  }
+  return result;
+}
+
 function safeParseJson(str) {
   try { return str ? JSON.parse(str) : {} } catch { return {} }
 }
@@ -134,9 +193,26 @@ async function executeReport(id, userId, userRole) {
     throw err;
   }
 
+  const primaryConnId  = report.connection_id;
+  const allJoins       = report.config.joins ?? [];
+  const localJoins     = allJoins.filter((j) => !j.connectionId || j.connectionId === primaryConnId);
+  const foreignJoins   = allJoins.filter((j) => j.connectionId && j.connectionId !== primaryConnId);
+
   const k = knex(buildKnexConfig(conn));
   try {
-    const rows = await buildQuery(k, report.config);
+    let rows = await buildQuery(k, { ...report.config, joins: localJoins });
+
+    for (const fJoin of foreignJoins) {
+      const fConn = getConnectionWithCredentials(fJoin.connectionId, report.user_id);
+      if (!fConn) {
+        const err = new Error(`Cross-connection not found: ${fJoin.connectionId}`);
+        err.statusCode = 404; err.code = 'NOT_FOUND';
+        throw err;
+      }
+      const rightRows = await fetchForeignTable(fConn, fJoin.table);
+      rows = performHashJoin(rows, rightRows, fJoin);
+    }
+
     const runId = uuidv4();
     const now = new Date().toISOString();
 
@@ -165,10 +241,22 @@ async function previewReport(userId, config, connectionId) {
     throw err;
   }
 
-  const previewConfig = { ...config, limit: Math.min(config.limit || 50, 50) };
+  const allJoins    = config.joins ?? [];
+  const localJoins  = allJoins.filter((j) => !j.connectionId || j.connectionId === connectionId);
+  const foreignJoins = allJoins.filter((j) => j.connectionId && j.connectionId !== connectionId);
+
+  const previewConfig = { ...config, joins: localJoins, limit: Math.min(config.limit || 50, 50) };
   const k = knex(buildKnexConfig(conn));
   try {
-    const rows = await buildQuery(k, previewConfig);
+    let rows = await buildQuery(k, previewConfig);
+
+    for (const fJoin of foreignJoins) {
+      const fConn = getConnectionWithCredentials(fJoin.connectionId, userId);
+      if (!fConn) continue;
+      const rightRows = await fetchForeignTable(fConn, fJoin.table);
+      rows = performHashJoin(rows, rightRows, fJoin);
+    }
+
     return { rows, rowCount: rows.length };
   } finally {
     await k.destroy();

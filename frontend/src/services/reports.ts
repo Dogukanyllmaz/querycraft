@@ -10,6 +10,7 @@ export interface ReportJoin {
   table: string
   type: 'INNER' | 'LEFT' | 'RIGHT'
   on: { leftColumn: string; rightColumn: string }
+  connectionId?: string  // cross-connection join
 }
 
 export interface ChartConfig {

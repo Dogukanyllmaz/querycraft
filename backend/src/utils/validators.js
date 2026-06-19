@@ -48,6 +48,7 @@ const reportSchema = Joi.object({
           leftColumn: Joi.string().required(),
           rightColumn: Joi.string().required(),
         }).required(),
+        connectionId: Joi.string().uuid().optional(),
       })
     ).default([]),
     chart: Joi.object({

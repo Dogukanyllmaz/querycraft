@@ -155,6 +155,7 @@ export function ReportBuilder() {
   const [schema,     setSchema]     = useState<TableColumn[]>([])
   const [joinSchemas, setJoinSchemas] = useState<Map<string, TableColumn[]>>(new Map())
   const [loadingJoinSchemas, setLoadingJoinSchemas] = useState<Set<string>>(new Set())
+  const [joinConnTables, setJoinConnTables] = useState<Map<string, TableEntry[]>>(new Map())
   const [previewRows, setPreviewRows] = useState<Record<string, unknown>[] | null>(null)
   const [reportName, setReportName] = useState('')
   const [config,     setConfig]     = useState<ReportConfig>(EMPTY_CONFIG)
@@ -188,12 +189,27 @@ export function ReportBuilder() {
     }
   }
 
+  async function loadJoinConnTables(connId: string) {
+    if (joinConnTables.has(connId)) return
+    try {
+      const r = await connectionsService.getTables(connId)
+      if (mounted.current) setJoinConnTables((prev) => new Map(prev).set(connId, r.data.data.tables))
+    } catch { /* ignore — user will see empty picker */ }
+  }
+
+  function getTablesForJoin(join: ReportJoin): TableEntry[] {
+    if (!join.connectionId || join.connectionId === connectionId) return tables
+    return joinConnTables.get(join.connectionId) ?? []
+  }
+
   // fetchJoinSchema: no joinSchemas dep — uses functional state update to avoid stale closure
-  const fetchJoinSchema = useCallback(async (tableName: string) => {
-    if (!tableName || !connectionId) return
+  // connIdOverride: used for cross-connection JOINs
+  const fetchJoinSchema = useCallback(async (tableName: string, connIdOverride?: string) => {
+    const connId = connIdOverride ?? connectionId
+    if (!tableName || !connId) return
     setLoadingJoinSchemas((prev) => { const s = new Set(prev); s.add(tableName); return s })
     try {
-      const r = await connectionsService.getTableSchema(connectionId, tableName)
+      const r = await connectionsService.getTableSchema(connId, tableName)
       if (mounted.current) {
         setJoinSchemas((prev) => new Map(prev).set(tableName, r.data.data.schema))
       }
@@ -579,7 +595,7 @@ export function ReportBuilder() {
                       incomplete ? 'border-amber-200 bg-amber-50/50' : 'border-gray-200 bg-gray-50'
                     }`}
                   >
-                    {/* Row 1: type toggle + table + delete */}
+                    {/* Row 1: type toggle + connection + table + delete */}
                     <div className="flex items-center gap-3 flex-wrap">
                       {/* JOIN type toggle */}
                       <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs font-bold">
@@ -597,14 +613,36 @@ export function ReportBuilder() {
                         ))}
                       </div>
 
+                      {/* Cross-connection selector */}
+                      {connections.length > 1 && (
+                        <select
+                          value={join.connectionId ?? connectionId}
+                          onChange={(e) => {
+                            const newConn = e.target.value === connectionId ? undefined : e.target.value
+                            updateJoin(i, { connectionId: newConn, table: '', on: { leftColumn: '', rightColumn: '' } })
+                            if (newConn) loadJoinConnTables(newConn)
+                          }}
+                          className="h-9 text-xs border border-gray-200 rounded-lg px-2 bg-white text-gray-700 outline-none focus:ring-2 focus:ring-blue-500 max-w-[160px]"
+                          title="Connection for this JOIN"
+                        >
+                          {connections.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.id === connectionId ? `${c.name} (main)` : `🔗 ${c.name}`}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+
                       {/* Join table */}
                       <div className="flex-1 min-w-40">
                         <TablePicker
-                          tables={tables.filter((t) => t.name !== config.table)}
+                          tables={getTablesForJoin(join).filter((t) =>
+                            !join.connectionId || join.connectionId !== connectionId ? true : t.name !== config.table
+                          )}
                           value={join.table}
                           onChange={(t) => {
                             updateJoin(i, { table: t, on: { leftColumn: '', rightColumn: '' } })
-                            if (t) fetchJoinSchema(t)
+                            if (t) fetchJoinSchema(t, join.connectionId)
                           }}
                           placeholder="Select table..."
                         />
