@@ -8,6 +8,8 @@ const { validate } = require('../middleware/validation');
 const { reportSchema } = require('../utils/validators');
 const { successResponse, errorResponse } = require('../utils/helpers');
 const { exportToCSV, exportToExcel } = require('../services/exportService');
+const { analyzeChartData } = require('../services/aiService');
+const { aiLimiter } = require('../middleware/rateLimiter');
 const {
   getReports,
   getReportsForViewer,
@@ -141,6 +143,38 @@ router.get('/:id/export', async (req, res, next) => {
     return res.send(buffer);
   } catch (err) {
     if (err.statusCode === 404) return errorResponse(res, err.message, err.code, 404);
+    next(err);
+  }
+});
+
+// POST /api/reports/:id/analyze — auth: requireAuth (admin owner OR viewer with access)
+const analyzeSchema = Joi.object({
+  aggData:   Joi.array().items(Joi.object()).min(1).max(500).required(),
+  xAxis:     Joi.string().max(100).required(),
+  yAxis:     Joi.string().max(100).required(),
+  chartType: Joi.string().valid('bar', 'line', 'area', 'pie').required(),
+});
+
+router.post('/:id/analyze', aiLimiter, validate(analyzeSchema), async (req, res, next) => {
+  try {
+    let report;
+    if (req.userRole === 'admin') {
+      report = getReportById(req.params.id, req.userId);
+    } else {
+      if (!hasAccess(req.params.id, req.userId)) {
+        return errorResponse(res, 'Report not found', 'NOT_FOUND', 404);
+      }
+      report = getReportByIdRaw(req.params.id);
+    }
+    if (!report) return errorResponse(res, 'Report not found', 'NOT_FOUND', 404);
+
+    const { aggData, xAxis, yAxis, chartType } = req.body;
+    const result = await analyzeChartData({ reportName: report.name, chartType, xAxis, yAxis, aggData });
+    return successResponse(res, result);
+  } catch (err) {
+    if (err.code === 'AI_NOT_CONFIGURED') {
+      return errorResponse(res, err.message, 'AI_NOT_CONFIGURED', 503);
+    }
     next(err);
   }
 });

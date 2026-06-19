@@ -1,17 +1,18 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { reportsService, type Report } from '@/services/reports'
+import { reportsService, type Report, type AggEntry } from '@/services/reports'
 import { useAuth } from '@/context/AuthContext'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/spinner'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { ReportChart } from '@/components/ui/report-chart'
+import { ReportChart, TrendBadge, type TrendStat } from '@/components/ui/report-chart'
 import { PermissionsModal } from '@/components/ui/permissions-modal'
+import { AiInsights } from '@/components/ui/ai-insights'
 import {
   Play, Download, ArrowLeft, Edit, BarChart2,
-  Table, ChevronLeft, ChevronRight, Link as LinkIcon, Users,
+  Table, ChevronLeft, ChevronRight, Link as LinkIcon, Users, Minus,
 } from 'lucide-react'
 
 const PAGE_SIZE = 100
@@ -52,6 +53,8 @@ export function ReportDetail() {
   const [view, setView] = useState<'table' | 'chart'>('table')
   const [page, setPage] = useState(1)
   const [permissionsOpen, setPermissionsOpen] = useState(false)
+  const [showAvg,   setShowAvg]   = useState(false)
+  const [trendStat, setTrendStat] = useState<TrendStat | null>(null)
 
   useEffect(() => {
     mounted.current = true
@@ -71,9 +74,28 @@ export function ReportDetail() {
       .finally(() => { if (mounted.current) setLoading(false) })
   }, [id])
 
+  // Aggregated chart data — mirrors ReportChart's aggBase for AI panel
+  const aggData = useMemo<AggEntry[]>(() => {
+    if (!rows || !config?.chart) return []
+    const { xAxis, yAxis } = config.chart
+    const grouped = new Map<string, number>()
+    for (const r of rows) {
+      const key = String(r[xAxis] ?? '(empty)')
+      const val = typeof r[yAxis] === 'bigint' ? Number(r[yAxis])
+        : typeof r[yAxis] === 'number' ? r[yAxis]
+        : parseFloat(String(r[yAxis] ?? '0')) || 0
+      grouped.set(key, (grouped.get(key) ?? 0) + val)
+    }
+    return Array.from(grouped.entries()).map(([k, v]) => ({
+      [xAxis]: k,
+      [yAxis]: v,
+    }))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, config?.chart?.xAxis, config?.chart?.yAxis])
+
   async function handleRun() {
     if (!id) return
-    setRunning(true); setError(''); setRows(null); setPage(1)
+    setRunning(true); setError(''); setRows(null); setPage(1); setShowAvg(false)
     try {
       const res = await reportsService.execute(id)
       if (!mounted.current) return
@@ -209,14 +231,33 @@ export function ReportDetail() {
         <Card>
           <CardHeader className="pb-0 border-b border-slate-100">
             <div className="flex items-center justify-between pb-4">
-              <CardTitle className="text-sm font-semibold text-slate-700">
-                {rows.length.toLocaleString()} rows
-                {totalPages > 1 && (
-                  <span className="ml-2 text-xs font-normal text-slate-400">
-                    page {page}/{totalPages}
-                  </span>
+              <div className="flex items-center gap-2">
+                <CardTitle className="text-sm font-semibold text-slate-700">
+                  {rows.length.toLocaleString()} rows
+                  {totalPages > 1 && (
+                    <span className="ml-2 text-xs font-normal text-slate-400">
+                      page {page}/{totalPages}
+                    </span>
+                  )}
+                </CardTitle>
+                {view === 'chart' && trendStat && <TrendBadge stat={trendStat} />}
+              </div>
+
+              <div className="flex items-center gap-2">
+                {/* Avg reference line toggle — bar/line/area only */}
+                {view === 'chart' && hasChart && config.chart?.type !== 'pie' && (
+                  <button
+                    onClick={() => setShowAvg((v) => !v)}
+                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium border transition-all duration-150 ${
+                      showAvg
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'border-slate-200 text-slate-500 hover:border-slate-300 hover:text-slate-700'
+                    }`}
+                    title="Toggle average reference line"
+                  >
+                    <Minus className="h-3 w-3" /> Avg line
+                  </button>
                 )}
-              </CardTitle>
 
               {hasChart && (
                 <div className="flex rounded-lg border border-slate-200 overflow-hidden p-0.5 gap-0.5 bg-slate-50">
@@ -242,12 +283,18 @@ export function ReportDetail() {
                   </button>
                 </div>
               )}
+              </div>
             </div>
           </CardHeader>
 
           <CardContent className={view === 'chart' ? 'pt-5 pb-5 px-5' : 'p-0 overflow-x-auto'}>
             {view === 'chart' && config.chart ? (
-              <ReportChart chartConfig={config.chart} rows={rows} />
+              <ReportChart
+                chartConfig={config.chart}
+                rows={rows}
+                showAvg={showAvg}
+                onTrendStat={setTrendStat}
+              />
             ) : rows.length === 0 ? (
               <div className="text-center py-12 text-slate-400 text-sm">
                 No rows matched your filters.
@@ -343,6 +390,16 @@ export function ReportDetail() {
             )}
           </CardContent>
         </Card>
+      )}
+
+      {/* AI Insights panel — shown after run when a chart is configured */}
+      {rows && config.chart && id && (
+        <AiInsights
+          reportId={id}
+          reportName={report.name}
+          aggData={aggData}
+          chartConfig={config.chart}
+        />
       )}
 
       {/* Empty run state */}

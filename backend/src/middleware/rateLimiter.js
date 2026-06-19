@@ -28,4 +28,17 @@ const generalLimiter = rateLimit({
   },
 });
 
-module.exports = { authLimiter, generalLimiter };
+const aiLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    data: null,
+    error: 'TOO_MANY_REQUESTS',
+    message: 'AI analysis rate limit reached. Please wait a moment.',
+  },
+});
+
+module.exports = { authLimiter, generalLimiter, aiLimiter };

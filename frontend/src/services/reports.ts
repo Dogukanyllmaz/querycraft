@@ -54,6 +54,26 @@ export interface ReportFormData {
   config: ReportConfig
 }
 
+// ── AI Analysis types ──────────────────────────────────────────────────────────
+
+export interface AggEntry {
+  [key: string]: string | number
+}
+
+export interface AnalyzeRequest {
+  aggData:   AggEntry[]
+  xAxis:     string
+  yAxis:     string
+  chartType: ChartConfig['type']
+}
+
+export interface AiInsightsResult {
+  keyFinding: string
+  insights:   string[]
+}
+
+// ── Service ────────────────────────────────────────────────────────────────────
+
 export const reportsService = {
   list: () => api.get<{ data: { reports: Report[] } }>('/reports'),
 
@@ -74,4 +94,7 @@ export const reportsService = {
     api.post<{ data: { rows: Record<string, unknown>[]; rowCount: number } }>('/reports/preview', { connection_id, config }),
 
   exportUrl: (id: string, format: 'csv' | 'xlsx') => `/api/reports/${id}/export?format=${format}`,
+
+  analyze: (id: string, body: AnalyzeRequest) =>
+    api.post<{ data: AiInsightsResult }>(`/reports/${id}/analyze`, body),
 }
