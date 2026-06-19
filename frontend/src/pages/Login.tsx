@@ -126,12 +126,14 @@ export function Login() {
             </Button>
           </form>
 
-          <p className="text-center text-sm text-slate-500">
-            First time here?{' '}
-            <Link to="/signup" className="text-blue-600 font-medium hover:underline">
-              Set up your account
+          <div className="flex items-center justify-between text-sm">
+            <Link to="/forgot-password" className="text-slate-500 hover:text-slate-700">
+              Şifremi unuttum
             </Link>
-          </p>
+            <Link to="/signup" className="text-blue-600 font-medium hover:underline">
+              İlk kurulum
+            </Link>
+          </div>
         </div>
       </div>
     </div>

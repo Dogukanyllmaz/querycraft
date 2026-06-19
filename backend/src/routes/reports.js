@@ -11,22 +11,16 @@ const { exportToCSV, exportToExcel } = require('../services/exportService');
 const { analyzeChartData } = require('../services/aiService');
 const { aiLimiter } = require('../middleware/rateLimiter');
 const {
-  getReports,
-  getReportsForViewer,
-  getReportById,
-  getReportByIdRaw,
-  createReport,
-  updateReport,
-  deleteReport,
-  executeReport,
-  previewReport,
+  getReports, getReportsForViewer, getReportById, getReportByIdRaw,
+  createReport, updateReport, deleteReport, executeReport, previewReport, bustCache,
 } = require('../services/reportService');
 const {
-  hasAccess,
-  getPermissions,
-  grantAccess,
-  revokeAccess,
+  hasAccess, getPermissions, grantAccess, revokeAccess,
 } = require('../services/reportPermissionsService');
+const {
+  grantGroupAccess, revokeGroupAccess, getGroupPermissionsForReport,
+} = require('../services/groupsService');
+const auditService = require('../services/auditService');
 
 router.use(requireAuth);
 
@@ -103,7 +97,13 @@ router.delete('/:id', requireAdmin, (req, res) => {
 // POST /api/reports/:id/execute — admin owner OR viewer with permission
 router.post('/:id/execute', async (req, res, next) => {
   try {
-    const result = await executeReport(req.params.id, req.userId, req.userRole);
+    const bust   = req.query.bust === 'true';
+    const result = await executeReport(req.params.id, req.userId, req.userRole, { bust });
+    const report = req.userRole === 'admin'
+      ? getReportById(req.params.id, req.userId)
+      : getReportByIdRaw(req.params.id);
+    auditService.log(req, 'RUN_REPORT', 'report', req.params.id, report?.name,
+      { rowCount: result.rowCount, fromCache: result.fromCache });
     return successResponse(res, result);
   } catch (err) {
     if (err.statusCode === 404) return errorResponse(res, err.message, err.code, 404);
@@ -213,7 +213,53 @@ router.delete('/:id/permissions/:userId', requireAdmin, (req, res) => {
 
   const revoked = revokeAccess(req.params.id, req.params.userId);
   if (!revoked) return errorResponse(res, 'Permission not found', 'NOT_FOUND', 404);
+  auditService.log(req, 'REVOKE_ACCESS', 'report', req.params.id, report.name);
   return successResponse(res, null, 'Access revoked');
+});
+
+// ── Group permissions ─────────────────────────────────────────────────────────
+
+// GET /api/reports/:id/permissions/groups
+router.get('/:id/permissions/groups', requireAdmin, (req, res) => {
+  const report = getReportById(req.params.id, req.userId);
+  if (!report) return errorResponse(res, 'Report not found', 'NOT_FOUND', 404);
+  const groups = getGroupPermissionsForReport(req.params.id);
+  return successResponse(res, { groups });
+});
+
+// POST /api/reports/:id/permissions/groups  body: { groupId }
+router.post('/:id/permissions/groups', requireAdmin, async (req, res, next) => {
+  try {
+    const report = getReportById(req.params.id, req.userId);
+    if (!report) return errorResponse(res, 'Report not found', 'NOT_FOUND', 404);
+    if (!req.body.groupId) return errorResponse(res, 'groupId is required', 'VALIDATION_ERROR', 400);
+
+    const permission = grantGroupAccess(req.params.id, req.body.groupId, req.userId);
+    auditService.log(req, 'GRANT_ACCESS', 'report', req.params.id, report.name, { groupId: req.body.groupId });
+    return successResponse(res, { permission }, 'Group access granted', 201);
+  } catch (err) {
+    if (err.statusCode) return errorResponse(res, err.message, err.code, err.statusCode);
+    next(err);
+  }
+});
+
+// DELETE /api/reports/:id/permissions/groups/:groupId
+router.delete('/:id/permissions/groups/:groupId', requireAdmin, (req, res) => {
+  const report = getReportById(req.params.id, req.userId);
+  if (!report) return errorResponse(res, 'Report not found', 'NOT_FOUND', 404);
+
+  const revoked = revokeGroupAccess(req.params.id, req.params.groupId);
+  if (!revoked) return errorResponse(res, 'Group permission not found', 'NOT_FOUND', 404);
+  auditService.log(req, 'REVOKE_ACCESS', 'report', req.params.id, report.name, { groupId: req.params.groupId });
+  return successResponse(res, null, 'Group access revoked');
+});
+
+// POST /api/reports/:id/cache/bust — clear cache for a report
+router.post('/:id/cache/bust', requireAdmin, (req, res) => {
+  const report = getReportById(req.params.id, req.userId);
+  if (!report) return errorResponse(res, 'Report not found', 'NOT_FOUND', 404);
+  bustCache(req.params.id);
+  return successResponse(res, null, 'Cache cleared');
 });
 
 module.exports = router;

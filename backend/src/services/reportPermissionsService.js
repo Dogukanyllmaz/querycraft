@@ -3,19 +3,24 @@
 const { v4: uuidv4 } = require('uuid');
 const { db } = require('../db/init');
 
-/** Returns true if userId has permission to view the given report (or owns it as admin). */
+/** True if userId has individual or group-based access to the report (or owns it). */
 function hasAccess(reportId, userId) {
-  const row = db()
-    .prepare('SELECT id FROM report_permissions WHERE report_id = ? AND user_id = ?')
-    .get(reportId, userId);
+  const row = db().prepare(
+    `SELECT 1 FROM report_permissions WHERE report_id = ? AND user_id = ?
+     UNION
+     SELECT 1 FROM group_report_permissions grp
+       JOIN group_members gm ON gm.group_id = grp.group_id
+     WHERE grp.report_id = ? AND gm.user_id = ?
+     LIMIT 1`
+  ).get(reportId, userId, reportId, userId);
   return Boolean(row);
 }
 
-/** List all users who have been granted access to a report. */
+/** Individual user permissions for a report. */
 function getPermissions(reportId) {
   return db()
     .prepare(
-      `SELECT u.id, u.email, u.role, rp.created_at as granted_at, gb.email as granted_by_email
+      `SELECT u.id, u.email, u.role, u.display_name, rp.created_at as granted_at, gb.email as granted_by_email
        FROM report_permissions rp
        JOIN users u  ON u.id  = rp.user_id
        JOIN users gb ON gb.id = rp.granted_by
@@ -25,28 +30,20 @@ function getPermissions(reportId) {
     .all(reportId);
 }
 
-/**
- * Grant a viewer access to a report.
- * Looks up the viewer by email and inserts a permission row.
- * Throws if user not found, user is an admin, or permission already exists.
- */
 function grantAccess(reportId, email, grantedBy) {
   const user = db()
-    .prepare("SELECT id, role FROM users WHERE email = ?")
+    .prepare('SELECT id, role FROM users WHERE email = ?')
     .get(email.toLowerCase());
 
   if (!user) {
     const err = new Error(`No user found with email: ${email}`);
-    err.statusCode = 404;
-    err.code = 'USER_NOT_FOUND';
+    err.statusCode = 404; err.code = 'USER_NOT_FOUND';
     throw err;
   }
 
-  // Already has permission?
   if (hasAccess(reportId, user.id)) {
     const err = new Error('User already has access to this report');
-    err.statusCode = 409;
-    err.code = 'PERMISSION_EXISTS';
+    err.statusCode = 409; err.code = 'PERMISSION_EXISTS';
     throw err;
   }
 
@@ -61,7 +58,6 @@ function grantAccess(reportId, email, grantedBy) {
   return { id, reportId, userId: user.id, email: user.email, grantedAt: now };
 }
 
-/** Revoke a viewer's access to a report. Returns true if a row was deleted. */
 function revokeAccess(reportId, userId) {
   const result = db()
     .prepare('DELETE FROM report_permissions WHERE report_id = ? AND user_id = ?')

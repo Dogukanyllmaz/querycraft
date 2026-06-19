@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '@/context/AuthContext'
 import {
   Database, FileText, Home, LogOut, Plus, Menu, X,
-  BarChart2, Users, Shield, Eye,
+  BarChart2, Users, Shield, Eye, Users2, Settings, ClipboardList, User,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -19,10 +19,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
   }
 
   const adminNavItems = [
-    { to: '/dashboard',   label: 'Dashboard',   icon: Home     },
-    { to: '/connections', label: 'Connections', icon: Database  },
-    { to: '/reports',     label: 'Reports',     icon: FileText  },
-    { to: '/admin/users', label: 'Users',       icon: Users     },
+    { to: '/dashboard',    label: 'Dashboard',   icon: Home          },
+    { to: '/connections',  label: 'Connections', icon: Database      },
+    { to: '/reports',      label: 'Reports',     icon: FileText      },
+    { to: '/admin/users',  label: 'Users',       icon: Users         },
+    { to: '/admin/groups', label: 'Groups',      icon: Users2        },
+    { to: '/admin/audit-log', label: 'Audit Log', icon: ClipboardList },
+    { to: '/admin/settings',  label: 'Settings', icon: Settings      },
   ]
 
   const viewerNavItems = [
@@ -36,6 +39,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
     if (to === '/dashboard') return location.pathname === '/' || location.pathname === '/dashboard'
     return location.pathname === to || (to !== '/dashboard' && location.pathname.startsWith(to))
   }
+
+  // Avatar letter
+  const avatarLetter = (user?.display_name || user?.email || '?').charAt(0).toUpperCase()
 
   const Sidebar = (
     <aside className={cn(
@@ -61,8 +67,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </button>
         </div>
 
-        {/* Role badge */}
-        <div className="mt-3">
+        {/* Role badge + profile link */}
+        <div className="mt-3 flex items-center justify-between">
           {isAdmin ? (
             <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium bg-blue-500/15 text-blue-300 ring-1 ring-blue-500/25">
               <Shield className="h-2.5 w-2.5" /> Admin
@@ -72,6 +78,15 @@ export function Layout({ children }: { children: React.ReactNode }) {
               <Eye className="h-2.5 w-2.5" /> Viewer
             </span>
           )}
+
+          <Link
+            to="/profile"
+            onClick={() => setSidebarOpen(false)}
+            title="Profilim"
+            className="flex items-center justify-center h-6 w-6 rounded-full bg-blue-500 text-white text-xs font-bold hover:bg-blue-400 transition-colors"
+          >
+            {avatarLetter}
+          </Link>
         </div>
       </div>
 
@@ -100,6 +115,16 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
       {/* Bottom actions */}
       <div className="px-3 pb-4 space-y-1 border-t border-white/8 pt-3">
+        {/* Profile link (full row) */}
+        <Link
+          to="/profile"
+          onClick={() => setSidebarOpen(false)}
+          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-200 hover:bg-white/6 transition-all duration-150"
+        >
+          <User className="h-4 w-4 shrink-0" />
+          {user?.display_name || 'Profilim'}
+        </Link>
+
         {isAdmin && (
           <button
             onClick={() => { navigate('/reports/new'); setSidebarOpen(false) }}

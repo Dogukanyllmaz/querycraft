@@ -1,6 +1,6 @@
 'use strict';
 
-const { verifyAccessToken } = require('../services/authService');
+const { verifyAccessToken, getUserById } = require('../services/authService');
 const { errorResponse } = require('../utils/helpers');
 
 function requireAuth(req, res, next) {
@@ -19,9 +19,11 @@ function requireAuth(req, res, next) {
       return errorResponse(res, 'Authentication required', 'UNAUTHORIZED', 401);
     }
 
-    const payload = verifyAccessToken(token);
-    req.userId   = payload.sub;
-    req.userRole = payload.role || 'viewer';
+    const payload  = verifyAccessToken(token);
+    req.userId     = payload.sub;
+    req.userRole   = payload.role || 'viewer';
+    const u        = getUserById(payload.sub);
+    req.userEmail  = u?.email ?? null;
     next();
   } catch (err) {
     if (err.name === 'TokenExpiredError') {

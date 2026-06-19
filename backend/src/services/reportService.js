@@ -1,11 +1,13 @@
 'use strict';
 
 const { v4: uuidv4 } = require('uuid');
-const knex = require('knex');
+const crypto = require('crypto');
+const knex   = require('knex');
 const { db } = require('../db/init');
 const { getConnectionWithCredentials, buildKnexConfig } = require('./connectionManager');
 const { buildQuery } = require('./queryBuilder');
 const { hasAccess } = require('./reportPermissionsService');
+const { getSetting } = require('./settingsService');
 
 // ── Cross-connection JOIN helpers ─────────────────────────────────────────────
 
@@ -130,6 +132,42 @@ function getReportByIdRaw(id) {
   return { ...row, config: safeParseJson(row.config) };
 }
 
+// ── Query cache helpers ────────────────────────────────────────────────────────
+
+function configHash(config) {
+  return crypto.createHash('sha256').update(JSON.stringify(config)).digest('hex');
+}
+
+function getCacheEntry(reportId, config) {
+  const hash = configHash(config);
+  return db().prepare(
+    `SELECT * FROM report_cache
+     WHERE report_id = ? AND config_hash = ? AND expires_at > ?`
+  ).get(reportId, hash, new Date().toISOString());
+}
+
+function setCacheEntry(reportId, config, rows) {
+  const ttl = parseInt(getSetting('query_cache_ttl_seconds', '300'), 10);
+  if (ttl <= 0 || rows.length > 5000) return;
+
+  const hash      = configHash(config);
+  const id        = uuidv4();
+  const now       = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + ttl * 1000).toISOString();
+
+  db().prepare(
+    `INSERT INTO report_cache (id, report_id, config_hash, row_count, data, created_at, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(report_id, config_hash) DO UPDATE SET
+       data = excluded.data, row_count = excluded.row_count,
+       created_at = excluded.created_at, expires_at = excluded.expires_at`
+  ).run(id, reportId, hash, rows.length, JSON.stringify(rows), now, expiresAt);
+}
+
+function bustCache(reportId) {
+  db().prepare('DELETE FROM report_cache WHERE report_id = ?').run(reportId);
+}
+
 function createReport(userId, data) {
   const id = uuidv4();
   const now = new Date().toISOString();
@@ -155,6 +193,7 @@ function updateReport(id, userId, data) {
     )
     .run(data.name, data.connection_id, JSON.stringify(data.config), now, id, userId);
 
+  bustCache(id);
   return getReportById(id, userId);
 }
 
@@ -163,13 +202,12 @@ function deleteReport(id, userId) {
   return Number(result.changes) > 0;
 }
 
-async function executeReport(id, userId, userRole) {
+async function executeReport(id, userId, userRole, { bust = false } = {}) {
   let report;
   if (userRole === 'viewer') {
     if (!hasAccess(id, userId)) {
       const err = new Error('Report not found');
-      err.statusCode = 404;
-      err.code = 'NOT_FOUND';
+      err.statusCode = 404; err.code = 'NOT_FOUND';
       throw err;
     }
     report = getReportByIdRaw(id);
@@ -179,24 +217,34 @@ async function executeReport(id, userId, userRole) {
 
   if (!report) {
     const err = new Error('Report not found');
-    err.statusCode = 404;
-    err.code = 'NOT_FOUND';
+    err.statusCode = 404; err.code = 'NOT_FOUND';
     throw err;
   }
 
-  // Connection is always fetched using the admin owner's user_id (viewers don't own the connection)
+  // Cache check
+  if (!bust) {
+    const cached = getCacheEntry(id, report.config);
+    if (cached) {
+      return {
+        rows:       JSON.parse(cached.data),
+        rowCount:   cached.row_count,
+        executedAt: cached.created_at,
+        fromCache:  true,
+      };
+    }
+  }
+
   const conn = getConnectionWithCredentials(report.connection_id, report.user_id);
   if (!conn) {
     const err = new Error('Connection not found or access denied');
-    err.statusCode = 404;
-    err.code = 'NOT_FOUND';
+    err.statusCode = 404; err.code = 'NOT_FOUND';
     throw err;
   }
 
-  const primaryConnId  = report.connection_id;
-  const allJoins       = report.config.joins ?? [];
-  const localJoins     = allJoins.filter((j) => !j.connectionId || j.connectionId === primaryConnId);
-  const foreignJoins   = allJoins.filter((j) => j.connectionId && j.connectionId !== primaryConnId);
+  const primaryConnId = report.connection_id;
+  const allJoins      = report.config.joins ?? [];
+  const localJoins    = allJoins.filter((j) => !j.connectionId || j.connectionId === primaryConnId);
+  const foreignJoins  = allJoins.filter((j) => j.connectionId && j.connectionId !== primaryConnId);
 
   const k = knex(buildKnexConfig(conn));
   try {
@@ -214,19 +262,17 @@ async function executeReport(id, userId, userRole) {
     }
 
     const runId = uuidv4();
-    const now = new Date().toISOString();
+    const now   = new Date().toISOString();
 
-    db()
-      .prepare(
-        `INSERT INTO report_runs (id, report_id, executed_at, row_count) VALUES (?, ?, ?, ?)`
-      )
-      .run(runId, id, now, rows.length);
+    db().prepare(
+      `INSERT INTO report_runs (id, report_id, executed_at, row_count) VALUES (?, ?, ?, ?)`
+    ).run(runId, id, now, rows.length);
 
-    db()
-      .prepare(`UPDATE reports SET last_run=?, updated_at=? WHERE id=?`)
-      .run(now, now, id);
+    db().prepare(`UPDATE reports SET last_run=?, updated_at=? WHERE id=?`).run(now, now, id);
 
-    return { rows, rowCount: rows.length, executedAt: now };
+    setCacheEntry(id, report.config, rows);
+
+    return { rows, rowCount: rows.length, executedAt: now, fromCache: false };
   } finally {
     await k.destroy();
   }
@@ -264,13 +310,7 @@ async function previewReport(userId, config, connectionId) {
 }
 
 module.exports = {
-  getReports,
-  getReportsForViewer,
-  getReportById,
-  getReportByIdRaw,
-  createReport,
-  updateReport,
-  deleteReport,
-  executeReport,
-  previewReport,
+  getReports, getReportsForViewer, getReportById, getReportByIdRaw,
+  createReport, updateReport, deleteReport, executeReport, previewReport,
+  bustCache,
 };
