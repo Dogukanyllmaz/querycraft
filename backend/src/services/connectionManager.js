@@ -134,20 +134,23 @@ async function getTables(connectionId, userId) {
   const k = getPool(conn);
   switch (conn.connection_type) {
     case 'mysql': {
-      const rows = await k.raw('SHOW TABLES');
-      return rows[0].map((r) => Object.values(r)[0]);
+      const rows = await k.raw('SHOW FULL TABLES');
+      return rows[0].map((r) => {
+        const vals = Object.values(r);
+        return { name: String(vals[0]), type: vals[1] === 'VIEW' ? 'view' : 'table' };
+      });
     }
     case 'postgresql': {
       const rows = await k.raw(
-        "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name"
+        "SELECT table_name, table_type FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name"
       );
-      return rows.rows.map((r) => r.table_name);
+      return rows.rows.map((r) => ({ name: r.table_name, type: r.table_type === 'VIEW' ? 'view' : 'table' }));
     }
     case 'sqlserver': {
       const rows = await k.raw(
-        "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME"
+        "SELECT TABLE_NAME, TABLE_TYPE FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE IN ('BASE TABLE', 'VIEW') ORDER BY TABLE_NAME"
       );
-      return rows.map((r) => r.TABLE_NAME);
+      return rows.map((r) => ({ name: r.TABLE_NAME, type: r.TABLE_TYPE === 'VIEW' ? 'view' : 'table' }));
     }
     default:
       throw new Error('Unsupported DB type');

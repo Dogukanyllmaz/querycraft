@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { connectionsService, type Connection, type TableColumn } from '@/services/connections'
+import { connectionsService, type Connection, type TableColumn, type TableEntry } from '@/services/connections'
 import { TablePicker } from '@/components/ui/table-picker'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -25,7 +25,7 @@ export function DatabaseBrowser() {
 
   const [connections, setConnections] = useState<Connection[]>([])
   const [connectionId, setConnectionId] = useState(urlConnectionId ?? '')
-  const [tables, setTables] = useState<string[]>([])
+  const [tables, setTables] = useState<TableEntry[]>([])
   const [selectedTable, setSelectedTable] = useState('')
   const [schema, setSchema] = useState<TableColumn[]>([])
   const [rows, setRows] = useState<Record<string, unknown>[] | null>(null)
@@ -161,7 +161,7 @@ export function DatabaseBrowser() {
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm font-semibold text-gray-500 uppercase tracking-wide flex items-center justify-between">
-                  Tables
+                  Tables & Views
                   {tables.length > 0 && <Badge variant="secondary">{tables.length}</Badge>}
                 </CardTitle>
               </CardHeader>

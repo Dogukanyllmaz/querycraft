@@ -23,6 +23,7 @@ export interface ConnectionFormData {
   password: string
 }
 
+export interface TableEntry { name: string; type: 'table' | 'view' }
 export interface TableColumn { column: string; type: string; nullable: boolean }
 
 export const connectionsService = {
@@ -47,14 +48,14 @@ export const connectionsService = {
 
   testExisting: (id: string) => api.post(`/connections/${id}/test`),
 
-  getTables: async (id: string): Promise<{ data: { data: { tables: string[] } } }> => {
+  getTables: async (id: string): Promise<{ data: { data: { tables: TableEntry[] } } }> => {
     const key = `conn:${id}:tables`
-    const cached = cache.get<string[]>(key)
+    const cached = cache.get<TableEntry[]>(key)
     if (cached) return { data: { data: { tables: cached } } }
 
-    const res = await api.get<{ data: { tables: string[] } }>(`/connections/${id}/tables`)
+    const res = await api.get<{ data: { tables: TableEntry[] } }>(`/connections/${id}/tables`)
     cache.set(key, res.data.data.tables, 60_000)
-    return res as unknown as { data: { data: { tables: string[] } } }
+    return res as unknown as { data: { data: { tables: TableEntry[] } } }
   },
 
   getTableSchema: async (id: string, tableName: string): Promise<{ data: { data: { schema: TableColumn[] } } }> => {

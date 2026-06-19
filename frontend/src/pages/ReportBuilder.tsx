@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { connectionsService, type Connection, type TableColumn } from '@/services/connections'
+import { connectionsService, type Connection, type TableColumn, type TableEntry } from '@/services/connections'
 import { TablePicker } from '@/components/ui/table-picker'
 import { reportsService, type ReportConfig, type ReportFilter, type ReportJoin, type AggregationConfig } from '@/services/reports'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -151,7 +151,7 @@ export function ReportBuilder() {
   const [aggTab,     setAggTab]     = useState<'columns' | 'aggregations'>('columns')
   const [connections, setConnections] = useState<Connection[]>([])
   const [connectionId, setConnectionId] = useState('')
-  const [tables,     setTables]     = useState<string[]>([])
+  const [tables,     setTables]     = useState<TableEntry[]>([])
   const [schema,     setSchema]     = useState<TableColumn[]>([])
   const [joinSchemas, setJoinSchemas] = useState<Map<string, TableColumn[]>>(new Map())
   const [loadingJoinSchemas, setLoadingJoinSchemas] = useState<Set<string>>(new Set())
@@ -600,7 +600,7 @@ export function ReportBuilder() {
                       {/* Join table */}
                       <div className="flex-1 min-w-40">
                         <TablePicker
-                          tables={tables.filter((t) => t !== config.table)}
+                          tables={tables.filter((t) => t.name !== config.table)}
                           value={join.table}
                           onChange={(t) => {
                             updateJoin(i, { table: t, on: { leftColumn: '', rightColumn: '' } })
