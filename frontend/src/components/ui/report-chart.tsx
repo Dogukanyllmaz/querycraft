@@ -21,6 +21,12 @@ const COLORS = [
   '#ec4899', // pink-500
 ]
 
+// Stacked bar palette — 10 distinct colors for multi-series charts
+const STACK_COLORS = [
+  '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6',
+  '#06b6d4', '#f97316', '#84cc16', '#ec4899', '#64748b',
+]
+
 const CHART_HEIGHT  = 360
 const ANIMATE_LIMIT = 100
 const BAR_LIMIT     = 30
@@ -94,8 +100,9 @@ export function ReportChart({ chartConfig, rows, showAvg = false, onTrendStat }:
   const { type, xAxis, yAxis } = chartConfig
   const gradId = useRef(`qg${Math.random().toString(36).slice(2, 8)}`).current
 
-  // GROUP BY xAxis, SUM yAxis across ALL rows — preserves insertion order
+  // GROUP BY xAxis, SUM yAxis — single-series charts only
   const aggBase = useMemo(() => {
+    if (type === 'stacked-bar') return []
     const grouped = new Map<string, number>()
     for (const r of rows) {
       const key = String(r[xAxis] ?? '(empty)')
@@ -105,11 +112,11 @@ export function ReportChart({ chartConfig, rows, showAvg = false, onTrendStat }:
       [xAxis]: key,
       [yAxis]: val,
     }))
-  }, [rows, xAxis, yAxis])
+  }, [rows, xAxis, yAxis, type])
 
   // KPI metrics — computed from aggBase (category-level aggregates)
   const kpiValues = useMemo(() => {
-    if (!aggBase.length) return null
+    if (type === 'stacked-bar' || !aggBase.length) return null
     const vals = aggBase.map((d) => toNum(d[yAxis])).filter((n) => isFinite(n))
     if (!vals.length) return null
     const total = vals.reduce((s, n) => s + n, 0)
@@ -128,11 +135,11 @@ export function ReportChart({ chartConfig, rows, showAvg = false, onTrendStat }:
       min: minVal, minLabel: String(minEntry?.[xAxis] ?? ''),
       max: maxVal, maxLabel: String(maxEntry?.[xAxis] ?? ''),
     }
-  }, [aggBase, xAxis, yAxis])
+  }, [aggBase, xAxis, yAxis, type])
 
   // Trend stat — context-aware insight for the card header
   const trendStat = useMemo<TrendStat | null>(() => {
-    if (!aggBase.length) return null
+    if (type === 'stacked-bar' || !aggBase.length) return null
     if (type === 'bar') {
       const sorted = [...aggBase].sort((a, b) => toNum(b[yAxis]) - toNum(a[yAxis]))
       const topVal = toNum(sorted[0]?.[yAxis] ?? 0)
@@ -160,10 +167,37 @@ export function ReportChart({ chartConfig, rows, showAvg = false, onTrendStat }:
   }, [aggBase, type, xAxis, yAxis])
 
   // Propagate trend stat to parent (for card header badge)
-  // onTrendStat should be a stable ref (e.g. React setState setter)
   useEffect(() => {
     onTrendStat?.(trendStat)
   }, [trendStat, onTrendStat])
+
+  // GROUP BY xAxis, SUM each series column — stacked-bar only
+  const [stackedData, stackedTotal] = useMemo<[Record<string, string | number>[], number]>(() => {
+    if (type !== 'stacked-bar' || !chartConfig.series?.length) return [[], 0]
+    const seriesCols = chartConfig.series
+    const grouped = new Map<string, Record<string, string | number>>()
+    for (const r of rows) {
+      const key = String(r[xAxis] ?? '(empty)')
+      if (!grouped.has(key)) {
+        const entry: Record<string, string | number> = { [xAxis]: key }
+        for (const s of seriesCols) entry[s] = 0
+        grouped.set(key, entry)
+      }
+      const entry = grouped.get(key)!
+      for (const s of seriesCols) {
+        entry[s] = (entry[s] as number) + toNum(r[s])
+      }
+    }
+    const totalCats = grouped.size
+    const sorted = [...grouped.values()]
+      .sort((a, b) => {
+        const sumA = seriesCols.reduce((acc, s) => acc + (a[s] as number), 0)
+        const sumB = seriesCols.reduce((acc, s) => acc + (b[s] as number), 0)
+        return sumB - sumA
+      })
+      .slice(0, BAR_LIMIT)
+    return [sorted, totalCats]
+  }, [rows, xAxis, type, chartConfig.series])
 
   if (!rows.length) return <EmptyChart />
 
@@ -184,8 +218,61 @@ export function ReportChart({ chartConfig, rows, showAvg = false, onTrendStat }:
     />
   ) : null
 
+  // ── Stacked Bar ──────────────────────────────────────────────────────────────
+  if (type === 'stacked-bar') {
+    const series = chartConfig.series ?? []
+    if (!series.length) return <EmptyChart message="No series columns configured." />
+
+    const n      = stackedData.length
+    const angle  = n > 12 ? -40 : n > 6 ? -25 : 0
+    const bottom = angle < -30 ? 76 : angle < -10 ? 58 : 36
+    const animate = n <= ANIMATE_LIMIT
+
+    return (
+      <div className="animate-fade-in">
+        <DataNote totalRows={rows.length} totalCategories={stackedTotal} shown={n} />
+        <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
+          <BarChart data={stackedData} margin={{ top: 10, right: 16, left: 0, bottom }}>
+            <CartesianGrid {...GRID_STYLE} vertical={false} />
+            <XAxis
+              dataKey={xAxis}
+              tick={TICK_STYLE}
+              angle={angle}
+              textAnchor={angle !== 0 ? 'end' : 'middle'}
+              interval={0}
+              tickLine={false}
+              axisLine={{ stroke: '#e2e8f0' }}
+              tickFormatter={(v: unknown) => {
+                const s = String(v)
+                return s.length > 16 ? `${s.slice(0, 14)}…` : s
+              }}
+            />
+            <YAxis tick={TICK_STYLE} width={64} tickFormatter={fmt} tickLine={false} axisLine={false} />
+            <Tooltip
+              contentStyle={TOOLTIP_STYLE}
+              formatter={(v: unknown, name: string) => [fmt(v), name]}
+              cursor={{ fill: 'rgba(59,130,246,0.04)' }}
+            />
+            <Legend wrapperStyle={LEGEND_STYLE} />
+            {series.map((s, i) => (
+              <Bar
+                key={s}
+                dataKey={s}
+                stackId="a"
+                fill={STACK_COLORS[i % STACK_COLORS.length]}
+                name={s}
+                maxBarSize={80}
+                isAnimationActive={animate}
+                radius={i === series.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]}
+              />
+            ))}
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    )
+  }
+
   // ── Bar ─────────────────────────────────────────────────────────────────────
-  // Sort by value desc, take top 30, assign a distinct colour per bar
   if (type === 'bar') {
     const barData = [...aggBase]
       .sort((a, b) => toNum(b[yAxis]) - toNum(a[yAxis]))

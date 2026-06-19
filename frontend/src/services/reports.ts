@@ -13,9 +13,10 @@ export interface ReportJoin {
 }
 
 export interface ChartConfig {
-  type: 'bar' | 'line' | 'area' | 'pie'
+  type: 'bar' | 'line' | 'area' | 'pie' | 'stacked-bar'
   xAxis: string
   yAxis: string
+  series?: string[]  // stacked-bar: columns to stack
 }
 
 export interface AggregationConfig {

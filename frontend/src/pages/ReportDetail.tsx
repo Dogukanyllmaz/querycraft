@@ -246,7 +246,7 @@ export function ReportDetail() {
 
               <div className="flex items-center gap-2">
                 {/* Avg reference line toggle — bar/line/area only */}
-                {view === 'chart' && hasChart && config.chart?.type !== 'pie' && (
+                {view === 'chart' && hasChart && config.chart?.type !== 'pie' && config.chart?.type !== 'stacked-bar' && (
                   <button
                     onClick={() => setShowAvg((v) => !v)}
                     className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium border transition-all duration-150 ${
@@ -394,7 +394,7 @@ export function ReportDetail() {
       )}
 
       {/* AI Insights panel — shown after run when a chart is configured */}
-      {rows && config.chart && id && (
+      {rows && config.chart && config.chart.type !== 'stacked-bar' && id && (
         <AiInsights
           reportId={id}
           reportName={report.name}

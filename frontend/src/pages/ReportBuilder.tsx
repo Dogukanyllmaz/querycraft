@@ -15,7 +15,7 @@ import { ReportChart } from '@/components/ui/report-chart'
 import type { ChartConfig } from '@/services/reports'
 import {
   ChevronRight, ChevronLeft, Plus, Trash2, Check,
-  Link, BarChart2, LineChart, AreaChart, PieChart, AlertCircle,
+  Link, BarChart2, LineChart, AreaChart, PieChart, Layers, AlertCircle,
 } from 'lucide-react'
 
 const STEPS = ['Select Table', 'Add JOINs', 'Choose Columns', 'Add Filters', 'Sort & Limit', 'Configure Chart', 'Preview & Save']
@@ -971,10 +971,11 @@ export function ReportBuilder() {
       {/* ── Step 5: Configure Chart ───────────────────────────────────── */}
       {step === 5 && (() => {
         const CHART_TYPES: { value: ChartConfig['type']; label: string; icon: React.ReactNode }[] = [
-          { value: 'bar',  label: 'Bar',  icon: <BarChart2 className="h-4 w-4" />    },
-          { value: 'line', label: 'Line', icon: <LineChart className="h-4 w-4" />     },
-          { value: 'area', label: 'Area', icon: <AreaChart className="h-4 w-4" />     },
-          { value: 'pie',  label: 'Pie',  icon: <PieChart className="h-4 w-4" />      },
+          { value: 'bar',         label: 'Bar',         icon: <BarChart2 className="h-4 w-4" /> },
+          { value: 'line',        label: 'Line',        icon: <LineChart className="h-4 w-4" />  },
+          { value: 'area',        label: 'Area',        icon: <AreaChart className="h-4 w-4" />  },
+          { value: 'pie',         label: 'Pie',         icon: <PieChart className="h-4 w-4" />   },
+          { value: 'stacked-bar', label: 'Stacked Bar', icon: <Layers className="h-4 w-4" />    },
         ]
         const chart = config.chart
         return (
@@ -1008,7 +1009,14 @@ export function ReportBuilder() {
                         <button
                           key={t.value}
                           type="button"
-                          onClick={() => setConfig((c) => ({ ...c, chart: c.chart ? { ...c.chart, type: t.value } : undefined }))}
+                          onClick={() => setConfig((c) => {
+                            if (!c.chart) return c
+                            if (t.value === 'stacked-bar') {
+                              const numericCols = axisColsMeta.filter((col) => isNumeric(col.type)).map((col) => col.id)
+                              return { ...c, chart: { ...c.chart, type: 'stacked-bar', yAxis: '', series: numericCols } }
+                            }
+                            return { ...c, chart: { ...c.chart, type: t.value, series: undefined } }
+                          })}
                           className={`flex items-center gap-1.5 px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${
                             chart.type === t.value
                               ? 'bg-blue-600 text-white border-blue-600'
@@ -1037,36 +1045,75 @@ export function ReportBuilder() {
                         onSelect={(v) => setConfig((c) => ({ ...c, chart: c.chart ? { ...c.chart, xAxis: v } : undefined }))}
                       />
                     </div>
-                    {/* Y Axis picker */}
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2">
-                        <Label className="text-sm font-semibold">
-                          {chart.type === 'pie' ? 'Value Column' : 'Y Axis'}
-                        </Label>
-                        <span className="text-xs text-gray-400">numeric</span>
+
+                    {/* Y Axis picker OR Series multi-select for stacked-bar */}
+                    {chart.type === 'stacked-bar' ? (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <Label className="text-sm font-semibold">Series Columns</Label>
+                          <span className="text-xs text-gray-400">numeric · stacked</span>
+                        </div>
+                        <div className="grid grid-cols-1 gap-1.5 max-h-52 overflow-y-auto pr-1">
+                          {axisColsMeta.filter((col) => isNumeric(col.type)).map((col) => (
+                            <label key={col.id} className="flex items-center gap-2.5 px-3 py-2 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors text-sm">
+                              <input
+                                type="checkbox"
+                                className="rounded shrink-0"
+                                checked={(chart.series ?? []).includes(col.id)}
+                                onChange={() => {
+                                  setConfig((c) => {
+                                    const series = c.chart?.series ?? []
+                                    const newSeries = series.includes(col.id)
+                                      ? series.filter((s) => s !== col.id)
+                                      : [...series, col.id]
+                                    return { ...c, chart: c.chart ? { ...c.chart, series: newSeries } : undefined }
+                                  })
+                                }}
+                              />
+                              <span className="font-mono text-xs truncate">{col.label}</span>
+                            </label>
+                          ))}
+                          {axisColsMeta.filter((col) => isNumeric(col.type)).length === 0 && (
+                            <p className="text-xs text-gray-400 py-2">No numeric columns available.</p>
+                          )}
+                        </div>
+                        {(chart.series?.length ?? 0) < 2 && (
+                          <p className="text-xs text-amber-600">Select at least 2 columns to stack.</p>
+                        )}
                       </div>
-                      <AxisPicker
-                        cols={axisColsMeta}
-                        selected={chart.yAxis}
-                        hint="numeric"
-                        onSelect={(v) => setConfig((c) => ({ ...c, chart: c.chart ? { ...c.chart, yAxis: v } : undefined }))}
-                      />
-                    </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <Label className="text-sm font-semibold">
+                            {chart.type === 'pie' ? 'Value Column' : 'Y Axis'}
+                          </Label>
+                          <span className="text-xs text-gray-400">numeric</span>
+                        </div>
+                        <AxisPicker
+                          cols={axisColsMeta}
+                          selected={chart.yAxis}
+                          hint="numeric"
+                          onSelect={(v) => setConfig((c) => ({ ...c, chart: c.chart ? { ...c.chart, yAxis: v } : undefined }))}
+                        />
+                      </div>
+                    )}
                   </div>
 
                   {/* Live preview from sampled data */}
-                  {previewRows && previewRows.length > 0 && chart.xAxis && chart.yAxis && (
+                  {previewRows && previewRows.length > 0 && chart.xAxis && (chart.yAxis || (chart.series?.length ?? 0) >= 2) && (
                     <div className="border border-gray-200 rounded-xl overflow-hidden">
                       <p className="text-xs text-gray-400 px-4 pt-3 pb-1">Preview (sample data)</p>
                       <ReportChart chartConfig={chart} rows={previewRows} />
                     </div>
                   )}
 
-                  {(!previewRows || previewRows.length === 0) && chart.xAxis && chart.yAxis && (
+                  {(!previewRows || previewRows.length === 0) && chart.xAxis && (chart.yAxis || (chart.series?.length ?? 0) >= 1) && (
                     <p className="text-xs text-gray-400 bg-gray-50 rounded-lg p-3">
-                      Chart will show <span className="font-mono font-medium text-gray-600">{chart.yAxis}</span> (Y)
-                      per <span className="font-mono font-medium text-gray-600">{chart.xAxis}</span> (X)
-                      as a <strong>{chart.type}</strong> chart.
+                      {chart.type === 'stacked-bar' ? (
+                        <>Chart will show <strong>{chart.series?.length ?? 0} series</strong> stacked per <span className="font-mono font-medium text-gray-600">{chart.xAxis}</span>.</>
+                      ) : (
+                        <>Chart will show <span className="font-mono font-medium text-gray-600">{chart.yAxis}</span> (Y) per <span className="font-mono font-medium text-gray-600">{chart.xAxis}</span> (X) as a <strong>{chart.type}</strong> chart.</>
+                      )}
                       <span className="ml-1 text-gray-300">Run preview in Step 7 to see a sample.</span>
                     </p>
                   )}
