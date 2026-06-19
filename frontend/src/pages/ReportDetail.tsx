@@ -75,9 +75,11 @@ export function ReportDetail() {
   }, [id])
 
   // Aggregated chart data — mirrors ReportChart's aggBase for AI panel
+  // Uses report state (not the `config` const below the guards) to avoid TDZ
   const aggData = useMemo<AggEntry[]>(() => {
-    if (!rows || !config?.chart) return []
-    const { xAxis, yAxis } = config.chart
+    const chart = report?.config?.chart
+    if (!rows || !chart) return []
+    const { xAxis, yAxis } = chart
     const grouped = new Map<string, number>()
     for (const r of rows) {
       const key = String(r[xAxis] ?? '(empty)')
@@ -90,8 +92,7 @@ export function ReportDetail() {
       [xAxis]: k,
       [yAxis]: v,
     }))
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, config?.chart?.xAxis, config?.chart?.yAxis])
+  }, [rows, report?.config?.chart?.xAxis, report?.config?.chart?.yAxis])
 
   async function handleRun() {
     if (!id) return
