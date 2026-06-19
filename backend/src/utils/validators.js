@@ -51,9 +51,10 @@ const reportSchema = Joi.object({
       })
     ).default([]),
     chart: Joi.object({
-      type: Joi.string().valid('bar', 'line', 'area', 'pie').required(),
+      type: Joi.string().valid('bar', 'line', 'area', 'pie', 'stacked-bar').required(),
       xAxis: Joi.string().min(1).required(),
-      yAxis: Joi.string().min(1).required(),
+      yAxis: Joi.string().allow('').default(''),
+      series: Joi.array().items(Joi.string()).optional(),
     }).optional(),
     aggregations: Joi.array().items(
       Joi.object({
